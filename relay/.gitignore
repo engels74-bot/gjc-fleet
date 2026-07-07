@@ -1,0 +1,10 @@
+# Build output (git is the source history; binaries are deploy artifacts)
+/target/
+/gjc-relay
+
+# Runtime env — lives only in ~/.gjc-relay/relay.env (holds no token by design,
+# but env files are never committed)
+relay.env
+
+# Stale pre-git backup files from the runtime dir
+*.bak-*
