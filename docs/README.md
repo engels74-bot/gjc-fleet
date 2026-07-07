@@ -25,10 +25,12 @@ suggests. Each page is self-contained and independently editable; every page end
 | [30-clawhip.md](30-clawhip.md) | clawhip: event pipeline, routes, DLQ semantics, issue spool, `~/.clawhip` |
 | [35-gjc-relay.md](35-gjc-relay.md) | The loopback embed proxy + supervision stack (added beyond the original layout — see its maintainer notes) |
 | [40-gjc-bot-automation.md](40-gjc-bot-automation.md) | The shell glue pipeline, script by script; scheduling map; worktree lifecycle |
-| [50-configuration-and-state.md](50-configuration-and-state.md) | Consolidated config/state/secret-custody inventory (names only, no values) |
+| [45-fleet-config.md](45-fleet-config.md) | `fleet.toml` key reference, the renderer command reference, secrets custody map, route invariants |
+| [50-configuration-and-state.md](50-configuration-and-state.md) | Consolidated config/state/secret-custody inventory (names only, no values); the three-layer config model |
 | [60-data-flow-and-integration.md](60-data-flow-and-integration.md) | **The heart**: every integration seam + the end-to-end sequence of a real job |
 | [70-deployment-and-operations.md](70-deployment-and-operations.md) | Services, scheduling, network posture, identities, logs; start/stop/rollback procedures |
-| [90-glossary-and-open-questions.md](90-glossary-and-open-questions.md) | Terms/aliases, the 2026-07-06 wave timeline, consolidated open questions |
+| [80-reproduction-guide.md](80-reproduction-guide.md) | Stand up your own fleet from scratch — accounts, prerequisites, secrets, bootstrap, verification |
+| [90-glossary-and-open-questions.md](90-glossary-and-open-questions.md) | Terms/aliases, the 2026-07-06/07 wave timeline, consolidated open questions |
 
 This doc set is the single source of truth. An earlier hermes-stack build-log/runbook that once
 held the operational procedures and build history (Phases A–G) has been retired and deleted;
@@ -36,15 +38,23 @@ held the operational procedures and build history (Phases A–G) has been retire
 "Phase A–G" glossary entry in
 [90-glossary-and-open-questions.md](90-glossary-and-open-questions.md#glossary).
 
+**Since 2026-07-07**, "single source of truth" extends to a three-layer config model, not just
+docs: `gjc-fleet` (this repo — code, unit templates, config templates, docs) is layer 1; the
+untracked, host-local `~/.config/gjc-fleet/fleet.toml` (operator identity, the Discord channel-ID
+map, path/version overrides, secret pointers) is layer 2; every rendered config file, env file, and
+now every fleet systemd unit under `~/.*`/`~/.config/systemd/user/` is layer 3, produced from the
+first two by `render/render.sh`. Detail: [45-fleet-config.md](45-fleet-config.md) ·
+[50-configuration-and-state.md](50-configuration-and-state.md#the-three-layer-config-model-since-2026-07-07).
+
 ## System at a glance
 
 | Component | Role | Source | Runtime | Runs as |
 |---|---|---|---|---|
 | gajae-code (`gjc`) | Coding agent (fixes issues, opens PRs) | `~/github/engels74/gjc/gajae-code` | `~/.gjc` | on-demand subprocess |
-| hermes-agent | Discord "GJC Brain" + cron + kanban | `~/github/engels74/gjc/hermes-agent` | `~/.hermes` | `hermes-gateway.service` |
-| clawhip | Event → Discord router + GitHub poller | `~/github/engels74/gjc/clawhip` | `~/.clawhip` | `clawhip.service` (:25294) |
-| gjc-relay | Plain text → rich embed loopback proxy | `~/github/engels74-bot/gjc-relay` | `~/.gjc-relay` | `gjc-relay.service` (:25295) |
-| gjc-bot | issue → run → review → merge-gate glue | `~/github/engels74-bot/gjc-bot-scripts` | `~/.gjc-bot` | systemd path/timers + hermes cron |
+| hermes-agent | Discord "GJC Brain" + cron + kanban | `~/github/engels74/gjc/hermes-agent` | `~/.hermes` | `hermes-gateway.service` (user unit) |
+| clawhip | Event → Discord router + GitHub poller | `~/github/engels74/gjc/clawhip` | `~/.clawhip` | `clawhip.service` (:25294, user unit) |
+| gjc-relay | Plain text → rich embed loopback proxy | `~/github/engels74-bot/gjc-fleet/relay` | `~/.gjc-relay` | `gjc-relay.service` (:25295, user unit) |
+| gjc-bot | issue → run → review → merge-gate glue | `~/github/engels74-bot/gjc-fleet/pipeline` | `~/.gjc-bot` | user-scope systemd path/timers + hermes cron |
 
 ```
 GitHub ──poll── clawhip ──spool──▶ gjc-bot ──runs──▶ gjc / claude ──PRs──▶ GitHub
@@ -106,3 +116,13 @@ GitHub ──poll── clawhip ──spool──▶ gjc-bot ──runs──▶
   `~/.gjc-relay/src` into its own pushed repo `engels74-bot/gjc-relay`
   (`~/github/engels74-bot/gjc-relay`); at-a-glance table Source cell updated. `~/.gjc-relay` is
   now purely the runtime home. Details: [35-gjc-relay.md](35-gjc-relay.md).
+- 2026-07-07 (gjc-fleet monorepo + user-units migration) — `gjc-bot-scripts`, `gjc-relay`, and
+  `gjc-architecture` (this doc set) merged into one monorepo, `engels74-bot/gjc-fleet`
+  (`pipeline/` `relay/` `render/` `systemd/` `docs/`); the three predecessor repos are archived on
+  GitHub with pointer READMEs, history preserved via merge. Page table gained
+  [45-fleet-config.md](45-fleet-config.md) and [80-reproduction-guide.md](80-reproduction-guide.md).
+  At-a-glance table Source cells for gjc-relay/gjc-bot now point at the `gjc-fleet` subdirs; all
+  five "Runs as" cells noted as user-scope systemd units. Extended the "single source of truth"
+  statement with the new three-layer config model (`gjc-fleet` templates →
+  `~/.config/gjc-fleet/fleet.toml` → rendered artifacts via `render/render.sh`), which now also
+  covers every fleet systemd unit (moved from system-level to user-scope this same migration).

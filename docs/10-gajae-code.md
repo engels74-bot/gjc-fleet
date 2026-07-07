@@ -7,7 +7,7 @@ sources:
   - ~/github/engels74/gjc/gajae-code/docs/ (codebase-overview, rpc, external-control-readiness, hermes-mcp-bridge, bot-integration, notifications-sdk, standalone-mcp)
   - ~/github/engels74/gjc/gajae-code/packages/coding-agent/src/ (cli.ts, main.ts, cli/args.ts)
   - ~/.gjc/
-  - ~/github/engels74-bot/gjc-bot-scripts/run/gjc-run.sh
+  - ~/github/engels74-bot/gjc-fleet/pipeline/run/gjc-run.sh
 maintainer_notes: >
   Edit this file in isolation. Keep headings stable; append to Changelog at the bottom.
   Line-number citations were verified 2026-07-06 and will drift as the repo moves.
@@ -210,7 +210,7 @@ Per-repo state also exists under each workspace's `.gjc/` dir (git-ignored), e.g
   This is the interactive "GJC Brain drives gjc" lane.
 - **gjc-bot → gjc:** the automated issue→PR lane runs `timeout 1800 gjc -p --no-pty "@<promptfile>"`
   inside a unique per-run worktree
-  (`~/github/engels74-bot/gjc-bot-scripts/run/gjc-run.sh:130`). See
+  (`~/github/engels74-bot/gjc-fleet/pipeline/run/gjc-run.sh:130`). See
   [40-gjc-bot-automation.md](40-gjc-bot-automation.md).
 - **gjc → GitHub:** in the automated lane, gjc itself commits, pushes, and opens the PR as
   `engels74-bot` (per the generated prompt file written in `gjc-run.sh:103-110`).
@@ -258,3 +258,8 @@ Per-repo state also exists under each workspace's `.gjc/` dir (git-ignored), e.g
 - 2026-07-07 (fleet/ move + component rename) — repo-bot → **gjc-bot** terminology; the
   sessions-table workspace-key example updated to the new `~/github/engels74-bot/fleet/` clone
   root (entries from before the move keep the old un-nested key).
+- 2026-07-07 (gjc-fleet monorepo + user-units migration) — Light-touch path sweep: the
+  `gjc-run.sh` citation (sources header + integration-surface body text) now points at
+  `gjc-fleet/pipeline/run/gjc-run.sh` instead of the archived standalone `gjc-bot-scripts` repo.
+  No change to gjc's own architecture, CLI, or control surfaces — this page's substance is
+  unaffected by the migration.

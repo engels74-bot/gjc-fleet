@@ -24,8 +24,8 @@ Three upstream source projects, one locally-authored component, and a shell glue
 | 1 | **gajae-code (`gjc`)** | Coding-agent harness that writes the actual fixes and opens PRs | Rust + TypeScript (Bun) | `~/github/engels74/gjc/gajae-code` | `~/.gjc` | On demand: `gjc-run.sh` (headless) or hermes via Coordinator MCP |
 | 2 | **hermes-agent** | Always-on Discord "GJC Brain": chat, cron scheduler, kanban; drives gjc via MCP | Python | `~/github/engels74/gjc/hermes-agent` | `~/.hermes` | `hermes-gateway.service` |
 | 3 | **clawhip** | Event-to-Discord notification router; polls GitHub, writes the issue spool | Rust | `~/github/engels74/gjc/clawhip` | `~/.clawhip` | `clawhip.service` (daemon on 127.0.0.1:25294) |
-| 4 | **gjc-relay** | Loopback proxy turning clawhip's plain-text Discord posts into styled embeds | Rust (local, ~710 lines) | `~/github/engels74-bot/gjc-relay` | `~/.gjc-relay` | `gjc-relay.service` (127.0.0.1:25295) |
-| 5 | **gjc-bot** | Shell glue: issue → triage → gjc run → review → merge gate | Bash | `~/github/engels74-bot/gjc-bot-scripts` (pipeline-stage dirs: `intake/` `run/` `review/` `maintenance/` `lib/` `systemd/`) | `~/.gjc-bot` (state) | systemd path unit + timers, 2 hermes cron jobs |
+| 4 | **gjc-relay** | Loopback proxy turning clawhip's plain-text Discord posts into styled embeds | Rust (local, ~710 lines) | `~/github/engels74-bot/gjc-fleet` (`relay/` subdir) | `~/.gjc-relay` | `gjc-relay.service` (127.0.0.1:25295, user unit) |
+| 5 | **gjc-bot** | Shell glue: issue → triage → gjc run → review → merge gate | Bash | `~/github/engels74-bot/gjc-fleet` (`pipeline/` subdir: `intake/` `run/` `review/` `maintenance/` `lib/`; `systemd/` unit templates at the repo root) | `~/.gjc-bot` (state) | user-scope systemd path unit + timers, 2 hermes cron jobs |
 
 Also on the field: **`engels74-bot`** (the bot's GitHub identity), **`augmentcode[bot]`** (external
 PR reviewer the pipeline reacts to), **headless `claude`** (Claude Code, used only as the review
@@ -37,13 +37,16 @@ verdicts).
 A common misread: the source checkouts are **not** where the services run. Two distinct GitHub
 areas, and a build/install step in between:
 
-- **`~/github/engels74-bot/` — the user's OWN `gjc-*` projects**: `gjc-bot-scripts` (the gjc-bot
-  shell glue), `gjc-relay` (the locally-authored relay crate), `gjc-server-tool` (the `stackman`
-  ops console), and `gjc-architecture` (this doc set). These commit as the `engels74-bot`
-  identity. Its **`fleet/` subfolder** holds every
-  pipeline-owned working copy — the six `engels74/*` app clones, their `*.gajae-code-worktrees/`
-  buckets, and the isolated `review/` checkouts (moved there 2026-07-07; the scripts' `GH_ROOT`,
-  clawhip's monitor paths, and hermes' workdir roots all point at `~/github/engels74-bot/fleet`).
+- **`~/github/engels74-bot/` — the user's OWN `gjc-*` projects**: since 2026-07-07 the pipeline
+  scripts, the relay crate, the systemd unit templates, and this doc set have been consolidated
+  into a single monorepo, **`gjc-fleet`** (`pipeline/` `relay/` `render/` `systemd/` `docs/`), plus
+  the still-separate `gjc-server-tool` (the `stackman` ops console). All commit as the
+  `engels74-bot` identity. The three former repos this replaced — `gjc-bot-scripts`, `gjc-relay`,
+  and `gjc-architecture` — are archived on GitHub with pointer READMEs; their history was preserved
+  via merge into `gjc-fleet`. Its **`fleet/` subfolder** holds every pipeline-owned working copy —
+  the six `engels74/*` app clones, their `*.gajae-code-worktrees/` buckets, and the isolated
+  `review/` checkouts (the scripts' `GH_ROOT`, clawhip's monitor paths, and hermes' workdir roots
+  all point at `~/github/engels74-bot/fleet`).
 - **`~/github/engels74/gjc/` — three UPSTREAM third-party engines**, cloned as *reference source
   only* (they are *not* under `engels74-bot`, *not* the user's own repos, and *not* where the apps
   run from): `gajae-code` (remote `Yeachan-Heo/gajae-code`), `hermes-agent`
@@ -58,18 +61,28 @@ deployed copy), and the units run from there:
 | gajae-code (`gjc`) | `~/github/engels74/gjc/gajae-code` | bun global package (`gajae-code`, v0.9.0) | `~/.bun/bin/gjc` |
 | hermes-agent | `~/github/engels74/gjc/hermes-agent` | separate deployed copy + editable venv under `~/.hermes/hermes-agent` (v0.18.0) | `~/.hermes/hermes-agent/venv/bin/python` (WorkingDirectory `~/.hermes`) |
 | clawhip | `~/github/engels74/gjc/clawhip` | `cargo install` from crates.io (v0.6.11) | `~/.cargo/bin/clawhip` |
-| gjc-relay | `~/github/engels74-bot/gjc-relay` (own repo, locally authored) | `cargo build --release` in the repo, binary copied over | `~/.gjc-relay/gjc-relay` |
+| gjc-relay | `~/github/engels74-bot/gjc-fleet` (`relay/` subdir, locally authored) | `cargo build --release` in `relay/`, binary copied over | `~/.gjc-relay/gjc-relay` |
 
 Pattern: the checkouts under `~/github/engels74/gjc/` are **reference source only** — read/diff
 them, but the running apps are installed independently via package managers (`cargo install` from
 crates.io, bun global) or a separate deployed copy (hermes), and updates arrive through those
 channels, not by rebuilding the checkout. The locally-authored **gjc-relay** follows the same
-source-repo → deployed-runtime pattern, except its source repo IS the user's own
-(`engels74-bot/gjc-relay`) and the "install channel" is a local `cargo build --release` + copy of
-the binary into `~/.gjc-relay/` (since 2026-07-07; it was previously built in place from an
-un-versioned `~/.gjc-relay/src`). The base toolchain (`gh`, `jq`, `tmux`, `python`) comes from
-linuxbrew; the fleet apps themselves are not brew formulae. The `~/.gjc`, `~/.hermes`,
-`~/.clawhip`, `~/.gjc-relay` dirs are config/state/runtime homes, not source trees.
+source-repo → deployed-runtime pattern, except its source now lives in the user's own monorepo
+(`engels74-bot/gjc-fleet`, `relay/` subdir) and the "install channel" is a local `cargo build
+--release` + copy of the binary into `~/.gjc-relay/`. The base toolchain (`gh`, `jq`, `tmux`,
+`python`) comes from linuxbrew; the fleet apps themselves are not brew formulae. The `~/.gjc`,
+`~/.hermes`, `~/.clawhip`, `~/.gjc-relay` dirs are config/state/runtime homes, not source trees —
+unaffected by the monorepo move.
+
+**Three-layer config model (added 2026-07-07):** `gjc-fleet` itself is layer 1, the
+source-of-truth for code, unit *templates*, config *templates*, and docs. Layer 2 is the untracked,
+host-local `~/.config/gjc-fleet/fleet.toml` (0600) — operator identity, the Discord
+name→numeric-channel-ID map (the only place IDs live besides rendered env files), path overrides,
+version pins, and secret-file pointers (names only). Layer 3 is the set of rendered artifacts under
+`~/.` (config files, env files, and — since all units are now user-scope — the installed unit files
+under `~/.config/systemd/user/`). The renderer, `render/render.sh`, turns layer 2 into layer 3; see
+[45-fleet-config.md](45-fleet-config.md) and
+[50-configuration-and-state.md](50-configuration-and-state.md).
 
 ## Topology
 
@@ -130,8 +143,10 @@ this doc set.) The same evening, a separate "Discord unification" wave added gjc
 embed design system — which post-dated that build-log entirely. A follow-up wave (2026-07-07, after the first
 full EasyHDR pipeline exercise) added issue/CI embed routes, multi-embed batch splitting in the
 relay, and hermes tuning — and hermes' brain model switched from NanoGPT/minimax-m3 to the Codex
-subscription (`gpt-5.5`). Timeline & staleness:
-[90-glossary-and-open-questions.md](90-glossary-and-open-questions.md).
+subscription (`gpt-5.5`). Later the same day, the **gjc-fleet monorepo + user-systemd migration**
+consolidated the pipeline/relay/docs repos into one monorepo behind a three-layer `fleet.toml`
+config model and moved every fleet unit from system-level to user-scope systemd. Timeline &
+staleness: [90-glossary-and-open-questions.md](90-glossary-and-open-questions.md).
 
 ## Reading order for newcomers
 
@@ -192,3 +207,12 @@ subscription (`gpt-5.5`). Timeline & staleness:
   --release` rather than installed from a registry), and `~/.gjc-relay` is purely a runtime home —
   the old "built directly from its own tree `~/.gjc-relay/src`" exception is gone. Verified live:
   rebuilt from the repo (binary byte-identical), redeployed, canary embed rendered.
+- 2026-07-07 (gjc-fleet monorepo + user-units migration) — `gjc-bot-scripts`, `gjc-relay`, and
+  `gjc-architecture` (this doc set) merged into one monorepo, `engels74-bot/gjc-fleet`
+  (`pipeline/` `relay/` `render/` `systemd/` `docs/`); the three old repos are archived on GitHub
+  with pointer READMEs, history preserved via merge. Component table rows 4–5 Source cells now
+  point at `gjc-fleet` subdirs. "Where each component lives and runs" rewritten around the new
+  monorepo layout and a new three-layer config model (`gjc-fleet` templates → host-local
+  `~/.config/gjc-fleet/fleet.toml` → rendered artifacts under `~/.*`, including now-user-scope
+  systemd units). History paragraph extended with this wave. No runtime-home paths
+  (`~/.gjc`, `~/.hermes`, `~/.clawhip`, `~/.gjc-relay`, `~/.gjc-bot`) changed.

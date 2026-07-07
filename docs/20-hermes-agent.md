@@ -24,8 +24,9 @@ general-purpose **messaging-platform AI agent**: an always-on gateway daemon con
 memory, scheduled jobs, and a kanban work-dispatch system.
 
 **In this deployment** hermes is the **"GJC Brain"** — the conversational Discord bot the user talks
-to, which can drive gajae-code via gjc's Coordinator MCP, and which runs three scheduled jobs via
-its internal cron (two gjc-bot jobs plus a self-scheduled EasyHDR PR-115 monitor). Live model:
+to, which can drive gajae-code via gjc's Coordinator MCP, and which runs two scheduled jobs via
+its internal cron (a third, self-scheduled EasyHDR PR-115 monitor existed briefly and was removed
+2026-07-07 — see [The cron subsystem](#the-cron-subsystem)). Live model:
 `gpt-5.5` via the **OpenAI Codex subscription** (`~/.hermes/config.yaml`, `model.default: gpt-5.5`
 / `provider: openai-codex`; switched from NanoGPT/`minimax-m3` on 2026-07-07). Credentials resolve
 from the OAuth credential pool in `~/.hermes/auth.json`, not from a NanoGPT key;
@@ -161,36 +162,30 @@ Delivery (`_deliver_result`, `scheduler.py:1308`) parses `deliver` strings like
 Output archives to `~/.hermes/cron/output/<job_id>/<timestamp>.md`. A `lifecycle_guard.py` rejects
 job specs containing gateway-lifecycle commands (prevents self-restart loops, issue #30719).
 
-**Live jobs (3)** (`~/.hermes/cron/jobs.json`):
+**Live jobs (2)** (`~/.hermes/cron/jobs.json`) — down from 3 as of 2026-07-07 (see below):
 
 | Job | Schedule | Kind | Runs | Delivers to |
 |---|---|---|---|---|
-| `stale-branches-report` | `0 3 * * *` | `no_agent` | `stale-branches.sh` (wrapper → `~/github/engels74-bot/gjc-bot-scripts/maintenance/stale-branches.sh`) | `#gjc-approvals` |
-| `mover-status-issue-triage` | `0 9 * * 1` | agent (`web` toolset; per-job `model_snapshot` still `minimax/minimax-m3` — stale, predates the Codex switch) | prerun `issue-triage-fetch.sh` (wrapper → `~/github/engels74-bot/gjc-bot-scripts/intake/issue-triage-fetch.sh`) feeds a weekly issue digest | `#gjc-events` |
-| `monitor-easyhdr-pr115-rustsec` | every 60 m (interval, not cron-expr) | agent (`terminal,file,github` toolsets) | monitors `engels74/EasyHDR` PR #115 (RUSTSEC triage): runs `bash /tmp/_monitor_pr115.sh` each tick, snapshots to `~/.hermes/cron/output/pr115-*.log` + `pr115.state`, triages reviews/CI, self-removes on merge | `origin` (the #easyhdr RUSTSEC thread) |
+| `stale-branches-report` | `0 3 * * *` | `no_agent` | `stale-branches.sh` (wrapper → `~/github/engels74-bot/gjc-fleet/pipeline/maintenance/stale-branches.sh`) | `#gjc-approvals` |
+| `mover-status-issue-triage` | `0 9 * * 1` | agent (`web` toolset; per-job `model_snapshot` still `minimax/minimax-m3` — stale, predates the Codex switch) | prerun `issue-triage-fetch.sh` (wrapper → `~/github/engels74-bot/gjc-fleet/pipeline/intake/issue-triage-fetch.sh`) feeds a weekly issue digest | `#gjc-events` |
 
 The two gjc-bot jobs' `~/.hermes/scripts/*.sh` entries are real-file wrappers (hermes rejects
-symlinks for `--script`) that `exec` straight into the `gjc-bot-scripts` repo. **Verified live**
+symlinks for `--script`) that `exec` straight into the `gjc-fleet` monorepo's `pipeline/` subdir. **Verified live**
 (both wrapper files read 2026-07-07): they previously `exec`'d the now-dead
 `~/scripts/repo-bot/{stale-branches.sh,issue-triage-fetch.sh}` (that directory no longer exists)
 and were broken at runtime; they now `exec` the paths in the table above, under the repo's
 `maintenance/` and `intake/` pipeline-stage subfolders respectively, and both ran successfully on
-their last tick (`last_status: "ok"` in `~/.hermes/cron/jobs.json` for both).
+their last tick (`last_status: "ok"` in `~/.hermes/cron/jobs.json` for both). A stale cron workdir
+(`fleet/mover-status`) was also fixed this session via `hermes cron edit`.
 
-The PR-115 monitor is unlike the other two: it was **self-scheduled by the agent** during the
-EasyHDR RUSTSEC run, and its script lives at an inline `/tmp/` path rather than a
-`~/.hermes/scripts/` wrapper. It is the job that `approvals.cron_mode: approve` exists for.
-
-**Live drift found 2026-07-07 (post model-switch):** this job is now failing every tick.
-`~/.hermes/cron/jobs.json` shows `last_status: "error"`; the run output
-(`~/.hermes/cron/output/1c5288839450/2026-07-07_19-01-41.md`) records: *"Skipped to prevent
-unintended spend: global inference config drifted since this job was created (provider 'custom' ->
-'openai-codex'; model 'minimax/minimax-m3' -> 'gpt-5.5'), and this job is unpinned."* The job's
-`provider_snapshot`/`model_snapshot` are still `custom`/`minimax/minimax-m3` from creation time, and
-hermes' spend-drift guard now refuses to run an unpinned job whose snapshot disagrees with the live
-global config (`gpt-5.5`/`openai-codex`). It will keep failing hourly until someone either pins the
-job to explicit provider/model via `cronjob action=update job_id=1c5288839450
-provider=<provider> model=<model>` or removes it (PR #115 was still open, unmerged, at last check).
+~~The PR-115 monitor is unlike the other two: it was **self-scheduled by the agent** during the
+EasyHDR RUSTSEC run…~~ **Removed 2026-07-07.** The third, self-scheduled
+`monitor-easyhdr-pr115-rustsec` job (previously failing every tick on a hermes spend-drift guard
+error after the Codex model switch — its `provider_snapshot`/`model_snapshot` were pinned to the
+retired `custom`/`minimax/minimax-m3` combo) no longer appears in `~/.hermes/cron/jobs.json`,
+confirmed live. This resolves the drift open question below and the "acceptable now that cron
+carries three jobs" question on
+[70-deployment-and-operations.md](70-deployment-and-operations.md#open-questions).
 
 ## Runtime & config (`~/.hermes`)
 
@@ -219,9 +214,10 @@ provider=<provider> model=<model>` or removes it (PR #115 was still open, unmerg
   live evidence: `bun …/gjc mcp-serve coordinator` runs as a child in the
   `hermes-gateway.service` cgroup. See [10-gajae-code.md](10-gajae-code.md#integration-surface-how-other-things-drive-gjc).
 - **hermes → gjc-bot:** only via cron — the two gjc-bot jobs above shell out to
-  `~/github/engels74-bot/gjc-bot-scripts/{maintenance/stale-branches.sh,intake/issue-triage-fetch.sh}`
-  through real-file wrappers in `~/.hermes/scripts/`. (The third cron job, the PR-115 monitor, is
-  self-contained and does not touch gjc-bot scripts.)
+  `~/github/engels74-bot/gjc-fleet/pipeline/{maintenance/stale-branches.sh,intake/issue-triage-fetch.sh}`
+  through real-file wrappers in `~/.hermes/scripts/`. (A third, self-scheduled PR-115 monitor job
+  existed here at one point, self-contained and not touching gjc-bot scripts; removed 2026-07-07 —
+  see [The cron subsystem](#the-cron-subsystem).)
 - **hermes → Discord:** conversational replies as plain markdown via its own bot identity
   ("GJC Brain"). **Hermes traffic does not pass through gjc-relay** and never produces embeds —
   by design (see [35-gjc-relay.md](35-gjc-relay.md#scope--what-does-and-does-not-flow-through-it)).
@@ -281,3 +277,13 @@ provider=<provider> model=<model>` or removes it (PR #115 was still open, unmerg
   `~/github/engels74-bot/fleet` (config backed up as `.bak-fleetmove-*`, gateway restarted,
   coordinator MCP env re-verified live); SOUL.md workspace conventions rewritten for the fleet/
   layout (Layout bullet, fleet-scoped clone/scratch/pipeline-ownership paths).
+- 2026-07-07 (gjc-fleet monorepo + user-units migration) — Light-touch path sweep: the cron table
+  and the "hermes → gjc-bot" wrapper description now cite
+  `gjc-fleet/pipeline/{maintenance,intake}/*.sh` instead of the archived standalone
+  `gjc-bot-scripts` repo. `hermes-gateway.service` itself is unaffected by the units migration —
+  it remains generated by `hermes gateway install`, already user-scope; no gateway config changed.
+  Separately (same session, hermes hygiene pass): the previously-drifting
+  `monitor-easyhdr-pr115-rustsec` cron job has been **removed** from `~/.hermes/cron/jobs.json`
+  (confirmed live) — cron table now shows 2 live jobs, not 3; the Purpose section and the
+  hermes→gjc-bot connection bullet updated to match. A stale cron workdir (`fleet/mover-status`)
+  was fixed via `hermes cron edit` in the same pass.

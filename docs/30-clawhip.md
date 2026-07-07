@@ -4,9 +4,10 @@ last_verified: 2026-07-07
 sources:
   - ~/github/engels74/gjc/clawhip/ (ARCHITECTURE.md, README.md, SKILL.md, Cargo.toml, src/)
   - ~/.clawhip/config.toml, ~/.clawhip/clawhip.env (var names only)
-  - /etc/systemd/system/clawhip.service (+ drop-in 10-gjc-relay.conf), issue-spool-adapter.{path,service,timer},
-    gjc-dlq-watch.service, gjc-relay-alert.service, gjc-relay.service (live systemctl state)
-  - ~/github/engels74-bot/gjc-bot-scripts/{intake,maintenance}/ (post-reorg layout)
+  - ~/.config/systemd/user/clawhip.service (+ drop-in 10-gjc-relay.conf), issue-spool-adapter.{path,service,timer},
+    gjc-dlq-watch.service, gjc-relay-alert.service, gjc-relay.service (live `systemctl --user` state)
+  - ~/github/engels74-bot/gjc-fleet/pipeline/{intake,maintenance}/, ~/github/engels74-bot/gjc-fleet/render/
+  - ~/.config/gjc-fleet/fleet.toml (host-local values; not read for this page's content)
 maintainer_notes: >
   Edit this file in isolation. Keep headings stable; append to Changelog at the bottom.
   The relay that sits in front of clawhip's Discord traffic has its own page: 35-gjc-relay.md.
@@ -124,11 +125,13 @@ truncation for the downstream parser (`issue-spool-adapter.sh` — see
 [40-gjc-bot-automation.md](40-gjc-bot-automation.md#issue-spool-adaptersh)).
 
 **Consumer side, verified live:** the spool path `/home/cvps/.gjc-bot/issue-spool.jsonl` is watched
-by a systemd **path unit**, `issue-spool-adapter.path` (`PathModified=`, `Unit=issue-spool-adapter.service`,
-`WantedBy=paths.target`; live state `enabled`/`active`/`waiting`). Every append triggers the
-`issue-spool-adapter.service` oneshot, whose `ExecStart=` now points at
-`/home/cvps/github/engels74-bot/gjc-bot-scripts/intake/issue-spool-adapter.sh` (updated from the
-dead `~/scripts/repo-bot/` path as part of the same reorg as the hermes cron wrappers — see
+by a **user-scope** systemd **path unit**, `issue-spool-adapter.path` (`PathModified=`,
+`Unit=issue-spool-adapter.service`, `WantedBy=paths.target`; live state `enabled`/`active`/`waiting`
+under `systemctl --user`). Every append triggers the `issue-spool-adapter.service` oneshot, whose
+`ExecStart=` now points at
+`/home/cvps/github/engels74-bot/gjc-fleet/pipeline/intake/issue-spool-adapter.sh` (the pipeline
+moved into the `gjc-fleet` monorepo's `pipeline/` subdir on 2026-07-07, same day the unit itself
+moved from system- to user-scope — see
 [20-hermes-agent.md](20-hermes-agent.md#the-cron-subsystem)). A companion
 `issue-spool-adapter.timer` provides a backup retry pass. The adapter re-reads the whole spool and
 dedups via its own ledger, so a coalesced or missed path-unit trigger is self-correcting.
@@ -145,6 +148,18 @@ explicit Discord route for `github.issue-opened` (both routes now match → both
 Files (0600): `config.toml` (live, ~7.4 KB), `clawhip.env`, plus dated `.bak-*` snapshots that
 record the 2026-07-06/07 reconfiguration waves (`phaseg` → `g7` → `discord` → `embedbatch`; see
 [90-glossary-and-open-questions.md](90-glossary-and-open-questions.md) for the wave timeline).
+
+**Since 2026-07-07, `config.toml` is a rendered artifact** (layer 3 of the fleet's three-layer
+config model — [50-configuration-and-state.md](50-configuration-and-state.md)): `render/render.sh`
+in `gjc-fleet` substitutes host values from `~/.config/gjc-fleet/fleet.toml` into a repo-tracked
+template and installs the result here. The 15 `[[routes]]` (lifecycle, issue/CI embeds, the
+issue-spool localfile route, the canary route, …) are **static template text** — never generated,
+so the `session.*`→`kind=agent.*` keying, the deliberate absence of a catch-all route, and the
+channel-less embed routes below all stay byte-for-byte stable across renders (guarded by
+`render/lint-routes.sh` in CI). Only the six `[[monitors.git.repos]]` blocks are generated, one per
+`[[repos]]` entry in `fleet.toml`. `render/render.sh diff` **replaces the dated `.bak-*` convention**
+going forward — existing `.bak-*` files above remain on disk as forensic history and are never
+deleted by the renderer.
 
 `config.toml` sections:
 
@@ -201,11 +216,14 @@ documentation.
 
 ## Live service
 
-`clawhip.service` (system-level): `ExecStart=/home/cvps/.cargo/bin/clawhip start`, `User=cvps`,
-`Environment=CLAWHIP_CONFIG=/home/cvps/.clawhip/config.toml`, `EnvironmentFile=~/.clawhip/clawhip.env`,
-`Restart=always`. Drop-in `clawhip.service.d/10-gjc-relay.conf` adds `After=`/`Wants=gjc-relay.service`
-so the relay is up before clawhip sends. Note the in-repo `deploy/clawhip.service` template does
-**not** match the live unit.
+`clawhip.service` (**user-scope**, `~/.config/systemd/user/clawhip.service`, `WantedBy=default.target`,
+enabled under linger — no `sudo`, no `User=` directive needed): `ExecStart=%h/.cargo/bin/clawhip start`,
+`Environment=CLAWHIP_CONFIG=%h/.clawhip/config.toml`, `EnvironmentFile=%h/.clawhip/clawhip.env`,
+`Restart=always`, `RestartSec=5`. Drop-in `clawhip.service.d/10-gjc-relay.conf` adds
+`After=`/`Wants=gjc-relay.service` so the relay is up before clawhip sends. The unit is now rendered
+from `gjc-fleet/systemd/clawhip.service` (repo-root `systemd/`, not the pipeline's own dir) via
+`render/render.sh apply --units`. Note the in-repo upstream `deploy/clawhip.service` template
+(inside the `clawhip` crate itself, not `gjc-fleet`) still does **not** match the live unit.
 
 ## Open questions
 
@@ -248,3 +266,14 @@ so the relay is up before clawhip sends. Note the in-repo `deploy/clawhip.servic
 - 2026-07-07 (state-dir rename) — The localfile sink now writes the issue spool to
   `/home/cvps/.gjc-bot/issue-spool.jsonl` (`~/.repo-bot` → `~/.gjc-bot` rename; config backed up
   as `.bak-gjcbotrename-*`, daemon restarted). Spool consumer path references updated.
+- 2026-07-07 (gjc-fleet monorepo + user-units migration) — `gjc-bot-scripts` merged into the
+  `gjc-fleet` monorepo as its `pipeline/` subdir (spool-adapter `ExecStart=` path updated
+  accordingly). `clawhip.service` moved from a system-level unit to a **user-scope** unit
+  (`~/.config/systemd/user/`, `WantedBy=default.target`, linger enabled, no `sudo`/`User=`),
+  rendered from `gjc-fleet/systemd/clawhip.service`. `config.toml` is now itself a rendered
+  artifact: `render/render.sh` fills a repo-tracked template from
+  `~/.config/gjc-fleet/fleet.toml`, with the 15 `[[routes]]` kept as static template text (never
+  generated) and only the six `[[monitors.git.repos]]` blocks generated per `fleet.toml`'s
+  `[[repos]]`; `render-diff` replaces the dated `.bak-*` convention for this file going forward
+  (existing `.bak-*` snapshots above are untouched, kept as forensic history). Byte-identical gate
+  verified live: the first render reproduced the live `config.toml` exactly.

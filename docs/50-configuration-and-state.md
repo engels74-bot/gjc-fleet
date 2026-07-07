@@ -3,16 +3,46 @@ status: verified         # draft | reviewed | verified
 last_verified: 2026-07-07
 sources:
   - ~/.gjc, ~/.hermes, ~/.clawhip, ~/.gjc-relay, ~/.gjc-bot (runtime evidence)
-  - ~/github/engels74-bot/gjc-bot-scripts/, ~/scripts/backuprestore/
+  - ~/github/engels74-bot/gjc-fleet/{pipeline,render,systemd}/, ~/scripts/backuprestore/
+  - ~/.config/gjc-fleet/fleet.toml (structure/keys only — this file is host-local and untracked)
 maintainer_notes: >
-  Edit this file in isolation. Names/roles only — NEVER add secret values here.
+  Edit this file in isolation. Names/roles only — NEVER add secret values here, and NEVER
+  reproduce numeric Discord channel/guild IDs (fleet.toml is the only place those live,
+  besides the env files it renders into).
   This is the consolidated inventory; per-component detail lives on the component pages.
+  Full fleet.toml key reference: 45-fleet-config.md.
 -->
 
 # Configuration & state inventory
 
 > Cross-cutting reference: every config file, env file, database, lock, ledger, and worktree
-> location, with owner and purpose. **No secret values — names/roles only.**
+> location, with owner and purpose. **No secret values, no numeric Discord IDs — names/roles only.**
+
+## The three-layer config model (since 2026-07-07)
+
+The fleet's config custody story changed shape with the gjc-fleet monorepo migration. Three layers,
+each with a distinct trust/tracking posture:
+
+1. **`gjc-fleet` (git-tracked source of truth)** — code, unit *templates* (`systemd/*.service.tmpl`
+   equivalents), config *templates*, `render/`, and this doc set. Safe to read, diff, and share; no
+   secrets or numeric IDs ever land here (`render/render.sh check` is a CI gate for exactly that).
+2. **`~/.config/gjc-fleet/fleet.toml`** (untracked, 0600, host-local) — the *only* file holding
+   operator identity, the `[discord.channels]` name→numeric-ID map, path overrides, version
+   `[pins]`, and `[secrets]` pointers (names/paths only, never values). One file per host; never
+   committed, never pasted into an issue or a doc. See [45-fleet-config.md](45-fleet-config.md) for
+   the full key reference.
+3. **Rendered artifacts under `~/.*`** — `~/.clawhip/config.toml`, `~/.gjc-relay/relay.env`,
+   `~/.gjc-bot/gjc-bot.env`, and (since the same migration) every fleet systemd unit under
+   `~/.config/systemd/user/`. All produced from layer 1 + layer 2 by `render/render.sh`
+   (`render|diff|apply|check|doctor`); this is what actually runs.
+
+`render/render.sh diff` **replaces the historical dated `.bak-*` convention** described below going
+forward — a would-be config edit is reviewed as a diff against the template + `fleet.toml`, then
+applied, rather than hand-edited with a timestamped backup alongside it. Existing `.bak-*` files
+already on disk are untouched; they remain forensic history of the pre-renderer waves. `render.sh
+doctor` separately checks hermes-owned files (`config.yaml` path lines, a duplicate `terminal:`
+block, cron workdirs) for drift **without** owning or rendering them — hermes's own config stays
+hand-maintained.
 
 ## Secrets custody (names only)
 
@@ -31,7 +61,14 @@ maintainer_notes: >
 Notable custody pattern: **`~/.hermes/.env` is the de-facto shared secret store** — gjc-bot
 scripts grep `GITHUB_TOKEN`/`NANOGPT_API_KEY` out of it at runtime rather than having their own
 env file. `~/.gjc-relay/relay.env` deliberately holds **no** token (the bot token transits
-per-request in the `Authorization` header).
+per-request in the `Authorization` header). Since 2026-07-07, `~/.config/gjc-fleet/fleet.toml`'s
+`[secrets]` table adds a layer of indirection on top of this: it records **pointers only**
+(`hermes_env = "~/.hermes/.env"`, `clawhip_env = "~/.clawhip/clawhip.env"`, plus the env-var *names*
+expected in each) so the renderer and a fresh operator both know where secrets live without the
+values ever passing through `fleet.toml` itself. The `EXA_API_KEY` used by gjc's `exa` MCP server
+is unaffected by this migration — gajae-code has no env-expansion support in `mcp.json`, so it
+stays a plain value in `~/.gjc/agent/mcp.json` (0600); a key rotation for it is flagged to the
+operator as follow-up, not part of this migration.
 
 ## Per-component runtime directories
 
@@ -64,12 +101,13 @@ caches.
 
 ### `~/.gjc-relay` (gjc-relay) — detail in [35-gjc-relay.md](35-gjc-relay.md#structure)
 
-Purely a **runtime home** since the 2026-07-07 repo adoption: `gjc-relay` binary (built from the
-`engels74-bot/gjc-relay` repo at `~/github/engels74-bot/gjc-relay` and copied here),
+Purely a **runtime home**: `gjc-relay` binary (built from the `relay/` subdir of the
+`engels74-bot/gjc-fleet` monorepo at `~/github/engels74-bot/gjc-fleet/relay` and copied here),
 **`design-system.json`** (shared styling source of truth), `relay.env`, `dlq-watch.sh`,
-`alert.sh`, `check-kind-coverage.sh`, `.omc/`. The former in-place source tree
-(`src/` + `Cargo.toml`/`Cargo.lock` + `target/`) and the `.bak-embedbatch-20260707-015213`
-files were removed once the repo-built binary was verified live — git is the history now.
+`alert.sh`, `check-kind-coverage.sh`, `.omc/`. `relay.env` is now a rendered artifact
+(`render/render.sh` target, 0600) rather than hand-maintained. Since the 2026-07-07 gjc-fleet
+monorepo migration folded the source's brief standalone `engels74-bot/gjc-relay` repo into
+`gjc-fleet`, no separate relay repo remains — git history preserved via merge.
 
 ### `~/.gjc-bot` (gjc-bot state) — detail in [40-gjc-bot-automation.md](40-gjc-bot-automation.md#env--config-surface)
 
@@ -87,6 +125,7 @@ state dir now matches the component name.
 | `issues.lock`, `merge-gate.lock`, `reviews.lock` | Per-lane pass locks |
 | `adapter.log`, `gjc-run.log`, `review.log`, `merge-gate.log`, `janitor.log` | Per-lane logs |
 | `prompt-*.md` | Transient per-run prompt files (created by `gjc-run.sh launch`, removed by `_exec`) |
+| `gjc-bot.env` | **New (2026-07-07)** — rendered, 0600 env file supplying `ISSUE_NOTIFY_CHANNEL`/`MERGE_GATE_CHANNEL`/`REVIEW_NOTIFY_CHANNEL` (the numeric channel defaults removed from the scripts); loaded via each unit's `EnvironmentFile=-%h/.gjc-bot/gjc-bot.env` |
 
 ## Databases
 
@@ -117,35 +156,57 @@ every pipeline-owned working copy (the six app clones, their worktree buckets, `
 the 2026-07-07 fleet/ move; the root of `~/github/engels74-bot/` holds only the bot's own
 `gjc-*` project repos.
 
-## systemd units (source vs installed)
+## systemd units (templates vs rendered/installed)
 
-gjc-bot unit *sources* live in `~/github/engels74-bot/gjc-bot-scripts/systemd/`; installed copies
-in `/etc/systemd/system/` are byte-identical as of 2026-07-07 (reinstalled + `daemon-reload` this
-session when the scripts left the now-dead `~/scripts/repo-bot/`). All four `ExecStart=` now resolve
-under `~/github/engels74-bot/gjc-bot-scripts/<subfolder>/` — `intake/issue-spool-adapter.sh`,
+**Rewritten 2026-07-07 (gjc-fleet monorepo + user-units migration).** Unit *templates* now live at
+the `gjc-fleet` repo **root** `systemd/` (`~/github/engels74-bot/gjc-fleet/systemd/` — one level
+above `pipeline/`, since these units span gjc-bot, clawhip, and the relay, not just the pipeline).
+`render/render.sh apply --units` fills each `{{FLEET_REPO}}`/`%h`-style placeholder and installs the
+result to **`~/.config/systemd/user/`** — every fleet unit is now a **user unit**
+(`WantedBy=default.target`, linger enabled so they start without a login session, no `sudo`
+anywhere in the lifecycle). All four gjc-bot `ExecStart=` resolve under
+`~/github/engels74-bot/gjc-fleet/pipeline/<subfolder>/` — `intake/issue-spool-adapter.sh`,
 `review/review-detector.sh`, `review/merge-gate.sh`, `maintenance/gjc-worktree-janitor.sh` (each
-last run `Result=success`). The relay-stack units
-(`gjc-relay.service`, `gjc-dlq-watch.service`, `gjc-relay-alert.service`, the
-`clawhip.service.d/10-gjc-relay.conf` drop-in) and `clawhip.service`/`hermes-gateway.service`
-exist only in `/etc/systemd/system/` (hermes' unit is generated by
-`hermes_cli/gateway.py`/`service_manager.py`; clawhip's differs from the repo's
-`deploy/clawhip.service` template). Full service map:
+last run `Result=success`). The relay-stack units (`gjc-relay.service`, `gjc-dlq-watch.service`,
+`gjc-relay-alert.service`, the `clawhip.service.d/10-gjc-relay.conf` drop-in) and `clawhip.service`
+are rendered + installed the same way.
+
+**`hermes-gateway.service` is the one exception**: it is **regenerated** by `hermes gateway
+install`, which `hermes_cli` natively runs in user scope (and handles its own linger enablement) —
+the renderer does not own it. `gjc-fleet/systemd/hermes-gateway.service.ref` is kept purely as a
+**non-installable reference copy** for diffing, marked `# REFERENCE ONLY — DO NOT INSTALL FROM
+HERE` in its header.
+
+**Old system-level units are disabled, not deleted.** The pre-migration units under
+`/etc/systemd/system/` were `disable`d as part of the cutover but are deliberately left on disk
+pending a 24–48 h soak period plus a reboot test, at which point they'll be removed for good;
+rollback during the soak window is simply re-enabling them. `render/render.sh doctor` and
+`~/scripts/backuprestore/restore.sh` are both dual-scope during this transitional period (see
+[Backups & rollback](#backups--rollback)). Full service map:
 [70-deployment-and-operations.md](70-deployment-and-operations.md#service-map).
 
 ## Backups & rollback
 
 `~/scripts/backuprestore/{backup-now.sh,restore.sh}` — snapshot + full-revert tooling; every
 Phase-G/relay artifact is registered for teardown (`restore.sh --apply`, optional
-`--purge-repos`): verified 2026-07-07 — `backup-now.sh` `copy_if`s `~/.gjc-relay` (runtime home)
-and `restore.sh` tears down the three relay-stack units, the clawhip ordering drop-in,
-`~/.gjc-relay`, and the now-gone `~/.gjc-relay-build` (a harmless no-op since the repo adoption
-removed that build cache). `backup-now.sh` now captures directory manifests for
-`~/github/engels74-bot/gjc-bot-scripts`, the new `~/github/engels74-bot/gjc-relay` repo, and
-`~/.gjc-bot` (`backup-now.sh:80-82`). The dated
-`.bak-*` files across `~/.clawhip` and `~/.hermes` are per-wave inline backups, distinct from this
-snapshot tooling — the relocated scripts carry no `.bak-*` files (they are git-managed in the
-`gjc-bot-scripts` repo). Note `restore.sh:137` still runs `rm -rf ~/scripts/repo-bot`, now a no-op
-(see [90-glossary-and-open-questions.md](90-glossary-and-open-questions.md#open-questions)).
+`--purge-repos`): `backup-now.sh` `copy_if`s `~/.gjc-relay` (runtime home) and `restore.sh` tears
+down the three relay-stack units, the clawhip ordering drop-in, `~/.gjc-relay`, and the now-gone
+`~/.gjc-relay-build` (a harmless no-op). The dated `.bak-*` files across `~/.clawhip` and
+`~/.hermes` are per-wave inline backups, distinct from this snapshot tooling — the pipeline scripts
+carry no `.bak-*` files (git-managed, now inside `gjc-fleet`).
+
+**Rewritten 2026-07-07 (gjc-fleet monorepo + user-units migration):** `restore.sh` is now
+**dual-scope** — it tears down user-scope units first (`systemctl --user disable --now`, per unit
+name), then any leftover `/etc/systemd/system/` units from the pre-migration system-level install
+(`sudo systemctl disable --now` + `rm -f`), running `daemon-reload` in both scopes; this reflects
+the fleet's transitional state during the 24–48 h soak before the old system units are deleted for
+good (see [systemd units](#systemd-units-templates-vs-renderedinstalled)). The stale `rm -rf
+~/scripts/repo-bot` line (`restore.sh:137` in earlier passes) has been **removed** — that dead path
+resolution is no longer needed. `backup-now.sh`'s manifests were consolidated: the separate
+`gjc-bot-scripts-repo.txt`/`gjc-relay-repo.txt` lines were replaced by one whole-`gjc-fleet`-repo
+manifest (`ls -laR` excluding `target/`/`.git/`), and a new `systemd-user-stack-units.txt` listing
+(`systemctl --user list-unit-files 'hermes*' 'clawhip*' 'gjc-*' 'issue-*' 'review-*' 'merge-*'`) sits
+alongside the pre-existing system-scope listing.
 
 ## Open questions
 
@@ -189,3 +250,21 @@ snapshot tooling — the relocated scripts carry no `.bak-*` files (they are git
   for the new repo (`gjc-relay-repo.txt`, `backup-now.sh:80-82`) and its `~/.gjc-relay` comment
   was refreshed; resolved the open question on relay-stack backup coverage (verified against
   `backup-now.sh`/`restore.sh` directly).
+- 2026-07-07 (gjc-fleet monorepo + user-units migration) — Added the "Three-layer config model"
+  section (`gjc-fleet` templates → host-local `~/.config/gjc-fleet/fleet.toml` → rendered
+  artifacts) and reframed `render/render.sh diff` as the replacement for the dated `.bak-*`
+  convention going forward. Secrets custody: noted `fleet.toml`'s `[secrets]` pointer table
+  (names/paths only) layered on top of the existing `~/.hermes/.env` shared-store pattern; noted
+  `EXA_API_KEY` rotation is flagged to the operator as unrelated follow-up. `~/.gjc-relay` entry:
+  the brief standalone `engels74-bot/gjc-relay` repo is gone (merged into `gjc-fleet`'s `relay/`
+  subdir); `relay.env` is now a rendered artifact. `~/.gjc-bot` table gained the new
+  `gjc-bot.env` rendered env file (channel IDs, replacing the removed in-script numeric defaults).
+  Rewrote "systemd units" (renamed from "source vs installed" to "templates vs
+  rendered/installed"): templates moved to `gjc-fleet`'s repo-root `systemd/`; every fleet unit is
+  now user-scope (`~/.config/systemd/user/`, linger, no `sudo`) except `hermes-gateway.service`,
+  which stays `hermes gateway install`-generated (a `.service.ref` copy kept for reference only);
+  old system-level units disabled-but-not-deleted pending a soak + reboot test. Rewrote "Backups &
+  rollback": `restore.sh` is now dual-scope (user units torn down first, then `/etc` leftovers) and
+  its dead `~/scripts/repo-bot` line is gone; `backup-now.sh` manifests consolidated to one
+  `gjc-fleet`-repo listing plus a new user-unit listing. Verified live against the actual
+  `render.sh`, unit files, and `backuprestore/` scripts on disk.

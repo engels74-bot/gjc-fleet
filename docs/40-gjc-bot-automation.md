@@ -2,17 +2,20 @@
 status: verified         # draft | reviewed | verified
 last_verified: 2026-07-07
 sources:
-  - ~/github/engels74-bot/gjc-bot-scripts/ (pipeline-stage layout: intake/ run/ review/
-    maintenance/ lib/ systemd/ — the flat ~/scripts/repo-bot/ path is DEAD/removed)
-  - /etc/systemd/system/ (installed copies of the gjc-bot units; ExecStart now points
-    into gjc-bot-scripts/<stage>/)
+  - ~/github/engels74-bot/gjc-fleet/pipeline/ (pipeline-stage layout: intake/ run/ review/
+    maintenance/ lib/ — the flat ~/scripts/repo-bot/ path and the standalone gjc-bot-scripts
+    repo are both DEAD/archived; systemd/ unit templates now live at the gjc-fleet repo root)
+  - ~/.config/systemd/user/ (installed copies of the gjc-bot units, rendered from
+    gjc-fleet/systemd/; ExecStart now points into pipeline/<stage>/)
   - ~/.hermes/scripts/ (real-file cron wrappers that exec the maintenance/ + intake/ scripts)
-  - ~/.gjc-bot/ (ledgers, locks, logs — runtime evidence)
+  - ~/.gjc-bot/ (ledgers, locks, logs, gjc-bot.env — runtime evidence)
+  - ~/github/engels74-bot/gjc-fleet/render/ (renderer that produces gjc-bot.env from fleet.toml)
 maintainer_notes: >
   Edit this file in isolation. Keep headings stable; append to Changelog at the bottom.
-  Line citations refer to the scripts in gjc-bot-scripts/ as re-verified 2026-07-07
-  (post the pipeline-stage reorg + self-locating SCRIPTS_DIR fix). Paths are given relative
-  to the repo root ~/github/engels74-bot/gjc-bot-scripts/.
+  Line citations refer to the scripts in gjc-fleet/pipeline/ as re-verified 2026-07-07
+  (post the pipeline-stage reorg + self-locating SCRIPTS_DIR fix, and post the monorepo +
+  user-units migration later the same day). Paths are given relative
+  to the repo root ~/github/engels74-bot/gjc-fleet/, i.e. inside its pipeline/ subdir.
 -->
 
 # gjc-bot — the shell glue pipeline
@@ -24,10 +27,11 @@ maintainer_notes: >
 
 ## Purpose
 
-The **`gjc-bot-scripts`** repo (`~/github/engels74-bot/gjc-bot-scripts/`, renamed from `gjc-bot`)
-is a set of nine Bash scripts + shared lib + systemd units that turn the three projects into an
-autonomous **GitHub-issue → PR → review → advisory-merge** bot for six of engels74's application
-repos. The scripts are grouped by **pipeline stage** (was a flat dir):
+The **`pipeline/`** subdirectory of the **`gjc-fleet`** monorepo
+(`~/github/engels74-bot/gjc-fleet/pipeline/` — formerly its own repo, `gjc-bot-scripts`, before the
+2026-07-07 monorepo migration; before that, `gjc-bot`) is a set of nine Bash scripts + shared lib
+that turn the three projects into an autonomous **GitHub-issue → PR → review → advisory-merge**
+bot for six of engels74's application repos. The scripts are grouped by **pipeline stage**:
 
 | Stage dir | Scripts |
 |---|---|
@@ -36,10 +40,15 @@ repos. The scripts are grouped by **pipeline stage** (was a flat dir):
 | `review/` | `review-detector.sh`, `review-run.sh`, `merge-gate.sh`, `ai-code-review-handler-original.md` (template) |
 | `maintenance/` | `gjc-worktree-janitor.sh`, `stale-branches.sh` |
 | `lib/` | `discord-embed.sh` |
-| `systemd/` | the `.service` / `.timer` / `.path` units |
 
-> The prior flat path `~/scripts/repo-bot/` is **DEAD** — that directory does not exist and every
-> script now resolves its own repo root (see [Self-locating scripts](#self-locating-scripts)).
+The unit **templates** (`.service` / `.timer` / `.path`) that used to live in this repo's own
+`systemd/` subdir now live at the `gjc-fleet` repo **root** `systemd/` — one level up from
+`pipeline/` — since they're shared across the whole fleet (relay + clawhip + gjc-bot), not just
+this pipeline.
+
+> The prior flat path `~/scripts/repo-bot/` is **DEAD**, and so is the standalone `gjc-bot-scripts`
+> repo (archived on GitHub, pointer README, history preserved via merge into `gjc-fleet`) — every
+> script resolves its own repo root at runtime (see [Self-locating scripts](#self-locating-scripts)).
 
 Two trigger fabrics drive it: **clawhip** (polls GitHub, emits events, writes the issue spool) and
 **systemd** (path unit + timers that run the glue). Heavy lifting is shelled out to **`gjc`** (the
@@ -51,7 +60,7 @@ Conventions used below: `STATE_DIR` = `~/.gjc-bot` (renamed from `~/.repo-bot` o
 identifiers now match the component name), `GH_ROOT` = `~/github/engels74-bot/fleet`
 (the **fleet clone root** — since the 2026-07-07 fleet/ move, all pipeline-owned working copies
 live in this subfolder, keeping the root of `~/github/engels74-bot/` to the bot's own `gjc-*`
-projects), `SCRIPTS_DIR` = the gjc-bot-scripts repo root, bot login = `engels74-bot`. The six
+projects), `SCRIPTS_DIR` = `gjc-fleet`'s `pipeline/` subdir root, bot login = `engels74-bot`. The six
 **monitored** application repos are fixed in the clawhip config
 (`~/.clawhip/config.toml [[monitors.git.repos]]`):
 `easyhdr`, `mover-status`, `obzorarr`, `otpravkarr`, `perevoditarr`, `zondarr`. The script-side lanes
@@ -59,8 +68,9 @@ projects), `SCRIPTS_DIR` = the gjc-bot-scripts repo root, bot login = `engels74-
 by globbing `GH_ROOT` for any `.git` repo (excluding `review/` and `*.gajae-code-worktrees`,
 `review/review-detector.sh:34`). Scaling model: *clone an app repo into `fleet/` and it's in the
 fleet.* Because the glob is scoped to `fleet/`, the discovered set is exactly the 6 monitored apps —
-the infra repos (`gjc-bot-scripts`, `gjc-server-tool`, `gjc-architecture`) sit one level up, outside
-the glob (before the fleet/ move they were swept accidentally; see Open questions).
+the infra repos (**`gjc-fleet`** — the monorepo holding this pipeline, the relay, and these docs —
+and `gjc-server-tool`) sit one level up, outside the glob (before the fleet/ move they were swept
+accidentally; see Open questions).
 
 ## Pipeline at a glance
 
@@ -232,7 +242,9 @@ and all free-form text stays in the post-`::` tail where the relay owns JSON con
 
 Every entry-point script resolves its own repo root instead of a hard-coded path (bug fix — the old
 default pointed at the now-missing `~/scripts/repo-bot`, which broke `issue-spool-adapter` at runtime
-because it could not source `lib/discord-embed.sh`):
+because it could not source `lib/discord-embed.sh`). Note the fix predates, and survived unchanged
+through, the later 2026-07-07 monorepo migration: `SCRIPTS_DIR` still resolves to `pipeline/` (one
+level up from each stage dir), now inside `gjc-fleet` rather than a standalone `gjc-bot-scripts` repo:
 
 ```sh
 SCRIPTS_DIR="${GJC_BOT_SCRIPTS:-$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd)}"
@@ -249,8 +261,8 @@ Sibling references key off `SCRIPTS_DIR` (`GJC_RUN`, `JANITOR`, `RUNNER`, `HANDL
 escape the `~/.hermes/scripts/` containment dir), so two **real-file** wrappers live there and simply
 `exec` the real scripts in the repo:
 
-- `~/.hermes/scripts/stale-branches.sh` → `exec .../gjc-bot-scripts/maintenance/stale-branches.sh "$@"`
-- `~/.hermes/scripts/issue-triage-fetch.sh` → `exec .../gjc-bot-scripts/intake/issue-triage-fetch.sh "$@"`
+- `~/.hermes/scripts/stale-branches.sh` → `exec .../gjc-fleet/pipeline/maintenance/stale-branches.sh "$@"`
+- `~/.hermes/scripts/issue-triage-fetch.sh` → `exec .../gjc-fleet/pipeline/intake/issue-triage-fetch.sh "$@"`
 
 Both previously `exec`'d the dead `~/scripts/repo-bot/...` paths and were broken; they now point at
 the new stage-dirs (verified 2026-07-07).
@@ -268,12 +280,16 @@ the new stage-dirs (verified 2026-07-07).
 | `mover-status-issue-triage` | hermes cron | `0 9 * * 1` (agent+prerun) | `~/.hermes/scripts/issue-triage-fetch.sh` wrapper → intake/issue-triage-fetch.sh → `#gjc-events` |
 | `gjc-reap.sh` | none | manual | run/gjc-reap.sh |
 
-All four systemd `.service` units set `ExecStart=` to the absolute stage-dir path under
-`/home/cvps/github/engels74-bot/gjc-bot-scripts/<stage>/<script>.sh` (verified against the installed
-copies 2026-07-07). Unit subtlety: `issue-spool-adapter.service` and `review-detector.service` set
-**`KillMode=process`** — without it, systemd's default control-group kill would reap the
-`setsid`-detached gjc/handler run when the oneshot parent exits. The janitor unit deliberately has no
-`PrivateTmp` (needs the user tmux socket in `/tmp`).
+All four systemd `.service` units are **user-scope** (`~/.config/systemd/user/`, no `sudo`) and set
+`ExecStart=` to the absolute stage-dir path under
+`/home/cvps/github/engels74-bot/gjc-fleet/pipeline/<stage>/<script>.sh` (verified against the
+installed copies 2026-07-07, same day as the gjc-fleet monorepo migration). Each also carries
+`EnvironmentFile=-%h/.gjc-bot/gjc-bot.env` — the rendered, 0600 env file that supplies the
+per-lane Discord channel IDs (see [Env & config surface](#env--config-surface)). Unit subtlety:
+`issue-spool-adapter.service` and `review-detector.service` set **`KillMode=process`** — without
+it, systemd's default control-group kill would reap the `setsid`-detached gjc/handler run when the
+oneshot parent exits. The janitor unit deliberately has no `PrivateTmp` (needs the user tmux socket
+in `/tmp`). All units are rendered from `gjc-fleet/systemd/*` by `render/render.sh apply --units`.
 
 > [inferred] The hermes cron also carries a third, self-scheduled agent job
 > (`monitor-easyhdr-pr115-rustsec`, `every 60m`) that does **not** touch gjc-bot — it is a transient
@@ -304,9 +320,18 @@ overrides, `GJC_RUN_TIMEOUT`, `REVIEW_RUN_TIMEOUT`, `JANITOR_GRACE_SECONDS`, `ST
 (`MERGE_GATE_REPOS`/`REVIEW_REPOS`/`TRIAGE_REPOS`), `*_CHANNEL` overrides, `DRY_RUN`.
 
 Secrets (names only): `GITHUB_TOKEN` (exported as `GH_TOKEN`) and `NANOGPT_API_KEY`, both grepped
-at runtime from `~/.hermes/.env`. Discord channel IDs are hard-coded in the scripts (values not
-reproduced here; the channels are `#gjc-events`, `#gjc-approvals`, `#gjc-lab` — see
-[60-data-flow-and-integration.md](60-data-flow-and-integration.md#discord-topology)).
+at runtime from `~/.hermes/.env`. **Discord channel IDs are no longer hard-coded in the scripts**
+(changed 2026-07-07): the three numeric channel defaults that used to live in
+`issue-spool-adapter.sh`, `merge-gate.sh`, and the review-handler template constant are **gone**
+from the repo — each script now hard-fails at startup (`${ISSUE_NOTIFY_CHANNEL:?…}`,
+`${MERGE_GATE_CHANNEL:?…}`, `${REVIEW_NOTIFY_CHANNEL:?…}`) unless the value arrives via
+`EnvironmentFile=-%h/.gjc-bot/gjc-bot.env` — a rendered, 0600 file produced by `render/render.sh`
+from `~/.config/gjc-fleet/fleet.toml`'s `[discord.channels]` map (`review-run.sh` additionally
+`sed`-fills `NOTIFY_CHANNEL` into the handler prompt from `REVIEW_NOTIFY_CHANNEL`). This keeps
+numeric Discord IDs out of the `gjc-fleet` git history entirely; the channels are still
+`#gjc-events`, `#gjc-approvals`, `#gjc-lab` — see
+[60-data-flow-and-integration.md](60-data-flow-and-integration.md#discord-topology) and
+[45-fleet-config.md](45-fleet-config.md).
 
 State in `~/.gjc-bot/`: locks (`gjc.lock`, `review.lock`, `issues.lock`, `merge-gate.lock`,
 `reviews.lock`), ledgers (`issues.jsonl`, `reviews.jsonl`, `merge-gate.jsonl`), the spool
@@ -333,11 +358,13 @@ State in `~/.gjc-bot/`: locks (`gjc.lock`, `review.lock`, `issues.lock`, `merge-
 3. **Stale unit description.** `issue-spool-adapter.service` says "→ Hermes issue-intake webhook",
    but the script dispatches directly to `gjc-run.sh launch`; no hermes webhook hop exists (the
    hermes webhook platform is disabled — [20-hermes-agent.md](20-hermes-agent.md#the-gateway)).
-4. **Installed units == repo units.** All 9 installed units match the repo
-   `gjc-bot-scripts/systemd/` copies byte-for-byte (re-diffed 2026-07-07); each `ExecStart` points at
-   the absolute stage-dir path under `~/github/engels74-bot/gjc-bot-scripts/<stage>/`. Reinstalled to
-   `/etc/systemd/system/` + `daemon-reload` after the reorg; all four services last ran
-   `Result=success`, timers/path unit `active`.
+4. **Installed units == rendered templates.** All 9 gjc-bot units (renamed from a flat
+   `gjc-bot-scripts/systemd/` copy-comparison, now superseded by the render pipeline) match the
+   `gjc-fleet/systemd/*` templates rendered through `render/render.sh`; each `ExecStart` points at
+   the absolute stage-dir path under `~/github/engels74-bot/gjc-fleet/pipeline/<stage>/`. Installed
+   to `~/.config/systemd/user/` (user-scope, no `sudo`) + `systemctl --user daemon-reload` as part
+   of the 2026-07-07 monorepo + user-units migration; all four services last ran `Result=success`,
+   timers/path unit `active`.
 5. **`.bak-discord-20260706-212308` wave.** The same-day backups record a purely
    notification-layer change: raw `clawhip send` calls migrated to the shared `discord_embed`
    helper, plus the `narrate()` `--error` bugfix. No control-flow changes.
@@ -364,15 +391,22 @@ State in `~/.gjc-bot/`: locks (`gjc.lock`, `review.lock`, `issues.lock`, `merge-
   incidental lock reuse.
 - ~~**Glob auto-discovery now sweeps the infra repos.**~~ **Resolved 2026-07-07 (fleet/ move):**
   the working clones moved to `~/github/engels74-bot/fleet/` and `GH_ROOT` now defaults there, so
-  the five glob-driven lanes match exactly the 6 monitored apps; the infra repos
-  (`gjc-bot-scripts`, `gjc-server-tool`, `gjc-architecture`) sit one level up, outside the glob.
+  the five glob-driven lanes match exactly the 6 monitored apps; the infra repos (**`gjc-fleet`**
+  and `gjc-server-tool`, since the same-day monorepo migration folded `gjc-bot-scripts` and
+  `gjc-relay` into `gjc-fleet`) sit one level up, outside the glob.
   Accepted side effect: the infra repos are no longer covered by
   `stale-branches.sh`/`issue-triage-fetch.sh` either (their branches/issues are human-managed).
-- **`restore.sh` still references the dead path.** `~/scripts/backuprestore/restore.sh` retains
-  `rm -rf ~/scripts/repo-bot` — now a no-op (the dir is gone; the scripts live in the git repo).
-  Left as-is deliberately this session (deleting the git repo on restore would be a destructive
-  policy change), but the stale line should eventually be reconciled. `backup-now.sh`'s path ref was
-  updated to `gjc-bot-scripts` this session.
+- ~~**`restore.sh` still references the dead `~/scripts/repo-bot` path.**~~ **Resolved 2026-07-07
+  (gjc-fleet monorepo + user-units migration):** the stale `rm -rf ~/scripts/repo-bot` line has
+  been removed from `~/scripts/backuprestore/restore.sh`. The same pass made `restore.sh`
+  dual-scope — it tears down user-scope units first (`systemctl --user disable --now`), then any
+  leftover `/etc/systemd/system/` units (`sudo systemctl disable --now` + `rm -f`, both scopes
+  followed by their own `daemon-reload`) — reflecting the fleet's mixed transitional state during
+  the 24–48 h soak before the old system units are deleted. `backup-now.sh`'s manifest gained a
+  user-unit listing (`systemctl --user list-unit-files 'hermes*' 'clawhip*' 'gjc-*' 'issue-*'
+  'review-*' 'merge-*'`) alongside the existing system-unit listing, plus a whole-`gjc-fleet`-repo
+  manifest replacing the old separate `gjc-bot-scripts-repo.txt`/`gjc-relay-repo.txt` lines — see
+  [50-configuration-and-state.md](50-configuration-and-state.md#backups--rollback).
 - ~~Only `mover-status` has real runs so far~~ **Overtaken 2026-07-07:** `easyhdr` completed the
   first full non-mover-status pipeline exercise (RUSTSEC triage → PR #115, review handler ×2,
   merge-gate advisory — see Changelog). The remaining four repos are still ledgered only as
@@ -421,3 +455,21 @@ State in `~/.gjc-bot/`: locks (`gjc.lock`, `review.lock`, `issues.lock`, `merge-
   handler-template instruction that still sourced `lib/discord-embed.sh` from the dead
   `~/scripts/repo-bot` path (Phase 8 embed block). Verified live: all four lanes ran clean, and
   a spool append at the new path fired the path unit within seconds.
+- 2026-07-07 (gjc-fleet monorepo + user-units migration) — The standalone `gjc-bot-scripts` repo
+  is archived (pointer README, history preserved via merge); the pipeline now lives as the
+  `pipeline/` subdirectory of the `engels74-bot/gjc-fleet` monorepo, stage-dir layout unchanged
+  (`intake/ run/ review/ maintenance/ lib/`). The `systemd/` unit templates moved up one level, to
+  `gjc-fleet`'s repo root (shared with clawhip/relay units, not pipeline-specific). All four
+  gjc-bot systemd units moved from system-level to **user-scope** (`~/.config/systemd/user/`, no
+  `sudo`), rendered from `gjc-fleet/systemd/*` and installed by `render/render.sh apply --units`;
+  each gained `EnvironmentFile=-%h/.gjc-bot/gjc-bot.env`. The three previously hard-coded numeric
+  Discord channel defaults (`issue-spool-adapter.sh`, `merge-gate.sh`, the review-handler template
+  constant) were **removed from the repo** — `ISSUE_NOTIFY_CHANNEL`/`MERGE_GATE_CHANNEL`/
+  `REVIEW_NOTIFY_CHANNEL` now hard-fail (`:?`) unless supplied by the rendered `gjc-bot.env`, and
+  `review-run.sh` `sed`-fills `NOTIFY_CHANNEL` into the handler prompt from
+  `REVIEW_NOTIFY_CHANNEL`. `~/scripts/backuprestore/restore.sh`'s stale `rm -rf
+  ~/scripts/repo-bot` line was removed and the script made dual-scope (tears down user units, then
+  any `/etc/systemd/system/` leftovers); `backup-now.sh` now captures a user-unit manifest
+  (including the `merge-*` glob) plus a whole-`gjc-fleet`-repo manifest. Verified live: five
+  pipeline triggers exercised end-to-end (timers scheduled correctly, the path unit fired ≤4 s on
+  a spool append, all oneshots `Result=success`).

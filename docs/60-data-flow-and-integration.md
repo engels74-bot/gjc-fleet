@@ -2,7 +2,7 @@
 status: verified         # draft | reviewed | verified
 last_verified: 2026-07-07
 sources:
-  - ~/github/engels74-bot/gjc-bot-scripts/<stage>/*.sh (the pipeline spine; stage-dir layout)
+  - ~/github/engels74-bot/gjc-fleet/pipeline/<stage>/*.sh (the pipeline spine; stage-dir layout)
   - ~/.clawhip/config.toml, ~/github/engels74/gjc/clawhip/src/sink/local_file.rs
   - ~/.hermes/config.yaml, ~/.hermes/cron/jobs.json, ~/.gjc-relay/src/main.rs
   - ~/.gjc-bot/*.log (live run evidence: mover-status#24 → PR #25; easyhdr#115 review handler ×2)
@@ -23,15 +23,15 @@ maintainer_notes: >
 | Seam | Mechanism | Data format | Evidence |
 |---|---|---|---|
 | clawhip → gjc-bot | **Shared file**: appends to `~/.gjc-bot/issue-spool.jsonl` (localfile sink); systemd `.path` unit fires on modify | JSONL, `content` leads with `<repo>#<n> opened: <title>` (compact, ≤240 chars) | `~/.clawhip/config.toml:29-33`; `clawhip src/sink/local_file.rs:75-81` |
-| gjc-bot → gjc | **Subprocess**: `timeout 1800 gjc -p --no-pty "@promptfile"` in a fresh worktree | Prompt file in; gjc's side effects (commits/PR) out; exit code | `gjc-bot-scripts/run/gjc-run.sh:130` |
-| gjc-bot → claude | **Subprocess**: `timeout 5400 claude -p --dangerously-skip-permissions --model opus < filled-prompt` in an isolated checkout | Filled markdown template in; PR mutations out | `gjc-bot-scripts/review/review-run.sh:101` |
+| gjc-bot → gjc | **Subprocess**: `timeout 1800 gjc -p --no-pty "@promptfile"` in a fresh worktree | Prompt file in; gjc's side effects (commits/PR) out; exit code | `pipeline/run/gjc-run.sh:130` |
+| gjc-bot → claude | **Subprocess**: `timeout 5400 claude -p --dangerously-skip-permissions --model opus < filled-prompt` in an isolated checkout | Filled markdown template in; PR mutations out | `pipeline/review/review-run.sh:101` |
 | gjc-bot → clawhip | **CLI → loopback HTTP**: `clawhip send` / `clawhip agent <state>` POST to the daemon on 127.0.0.1:25294 | Event JSON; `GJCEMBED1` envelope in message content | `run/gjc-run.sh:49-58`; `lib/discord-embed.sh:61` |
 | gjc-bot → GitHub | **CLI**: `gh api` / `gh pr list` / `gh pr comment` / `gh issue view` | REST JSON | throughout the scripts |
 | gjc-bot → LLM (triage, merge verdict) | **HTTPS**: NanoGPT chat-completions, **no tools** | one-line `ACTIONABLE:`/`SKIP:` or `MERGE_READY:`/`REQUEST_CHANGES:` | `intake/issue-spool-adapter.sh:65-72`; `review/merge-gate.sh:62-70` |
 | clawhip → Discord | **HTTP via loopback proxy**: REST base overridden to gjc-relay 127.0.0.1:25295 | Discord REST; relay rewrites `GJCEMBED1` content into embeds (since 2026-07-07 also splitting multi-envelope batches into one embed per line) | `~/.clawhip/clawhip.env`; `~/.gjc-relay/src/main.rs` (`MAGIC`/`ALLOWED_KEYS` at `:22-23`) |
 | clawhip → GitHub | **Polling**: monitor sources hit the GitHub API every 60 s for 6 repos | REST JSON → internal events | `~/.clawhip/config.toml [monitors]` |
 | hermes → gjc | **MCP (stdio subprocess)**: gateway registers `gjc_coordinator` → `gjc mcp-serve coordinator` | MCP tool calls (start_session, send_prompt, read_turn, …) | `~/.hermes/config.yaml`; live child in the gateway cgroup |
-| hermes → gjc-bot | **Cron subprocess**: two **real-file** wrappers in `~/.hermes/scripts/` (hermes rejects symlinks for `--script`) that `exec` `maintenance/stale-branches.sh` + `intake/issue-triage-fetch.sh` in the gjc-bot-scripts repo; cron may also carry self-scheduled agent jobs that don't touch gjc-bot (e.g. the `monitor-easyhdr-pr115-rustsec` 60-min job) | script stdout → LLM prompt / Discord message | `~/.hermes/cron/jobs.json`; `~/.hermes/scripts/{stale-branches,issue-triage-fetch}.sh` |
+| hermes → gjc-bot | **Cron subprocess**: two **real-file** wrappers in `~/.hermes/scripts/` (hermes rejects symlinks for `--script`) that `exec` `maintenance/stale-branches.sh` + `intake/issue-triage-fetch.sh` in the `gjc-fleet` monorepo's `pipeline/` subdir; cron may also carry self-scheduled agent jobs that don't touch gjc-bot (e.g. the `monitor-easyhdr-pr115-rustsec` 60-min job) | script stdout → LLM prompt / Discord message | `~/.hermes/cron/jobs.json`; `~/.hermes/scripts/{stale-branches,issue-triage-fetch}.sh` |
 | hermes → Discord | **Own gateway session** (bot identity "GJC Brain"), plain markdown, NOT via relay | Discord gateway/REST | `plugins/platforms/discord/adapter.py` |
 | user → hermes | Discord DM / @mention → per-user session, auto-threads | chat | [20-hermes-agent.md](20-hermes-agent.md#the-gateway) |
 | augmentcode[bot] → gjc-bot | **Polling**: review-detector reads PR reviews via `gh api` | GitHub review objects | `review/review-detector.sh:47-49` |
@@ -191,3 +191,8 @@ Guild: "engels74's server". Channels (names only; numeric IDs live in the config
   `~/github/engels74-bot/fleet/`).
 - 2026-07-07 (state-dir rename) — Seam paths updated for the `~/.repo-bot` → `~/.gjc-bot`
   rename (spool, ledgers, locks, logs). Seam mechanics unchanged.
+- 2026-07-07 (gjc-fleet monorepo + user-units migration) — Light-touch path sweep: seam-table
+  citations (`gjc-run.sh`, `review-run.sh`) and the sources header now point at
+  `gjc-fleet/pipeline/<stage>/` instead of the archived standalone `gjc-bot-scripts` repo; the
+  hermes→gjc-bot seam row now says "the `gjc-fleet` monorepo's `pipeline/` subdir". Seam mechanics,
+  the sequence diagram, and the Discord topology are all unaffected by the migration.
