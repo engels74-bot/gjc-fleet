@@ -1,0 +1,140 @@
+[dispatch]
+ci_batch_window_secs = 30
+routine_batch_window_secs = 5
+
+[daemon]
+bind_host = "127.0.0.1"
+port = 25294
+base_url = "http://127.0.0.1:25294"
+
+[defaults]
+channel = "{{CH_DEFAULT}}"
+format = "compact"
+
+[[routes]]
+event = "agent.approval-requested"
+sink = "discord"
+channel = "{{CH_GJC_APPROVALS}}"
+format = "alert"
+# Phase 3: render as a design-system embed via gjc-relay. Free-form (summary) only
+# in the post-`::` tail; agent_name/project are slugs safe for head slots.
+template = "GJCEMBED1 kind=agent.approval-requested actor={agent_name} repo={project} :: {summary}"
+
+# Phase G4: spool github.issue-opened to a localfile for the owned intake adapter
+# (dispatches IN ADDITION to the per-repo monitor channel, which stays the
+# human-visible notice). format=compact: the sink truncates `content` to 240 chars
+# and the clawhip envelope (contract_event/correlation_id/uuids/first_seen_at)
+# would push repo past that in raw JSON — compact renders "<repo>#<number> opened:
+# <title>" so repo+number LEAD and survive truncation (title is re-fetched via gh).
+[[routes]]
+event = "github.issue-opened"
+sink = "localfile"
+local_path = "{{HOME}}/.gjc-bot/issue-spool.jsonl"
+format = "compact"
+
+# --- Discord unification Phase 2 canary (reversible: delete this block + restart) ---
+# Dedicated throwaway route; touches NO production route. Emits the GJCEMBED1
+# delimiter envelope, which gjc-relay turns into an approval-requested embed in
+# #gjc-lab. Trigger deterministically with:
+#   clawhip emit gjc.canary --repo <r> --status <s> --actor <a> --message "<text>"
+[[routes]]
+event = "gjc.canary"
+sink = "discord"
+channel = "{{CH_GJC_LAB}}"
+template = "GJCEMBED1 kind=agent.approval-requested repo={repo} status={status} actor={actor} :: {message}"
+
+# --- Discord unification Phase 3: envelope templates per event kind. -----------------
+# All channel-less by design: router resolves route.channel -> event.channel ->
+# default, so each event keeps its own channel (per-repo monitors keep their channel;
+# agent narration keeps #gjc-events default). One route per kind => no double-post.
+# free-form text lives ONLY in the post-`::` tail; head slots hold slug/enum/url tokens.
+# Reversible: delete a block + restart to revert that kind to DefaultRenderer.
+#
+# NOTE on kinds: `clawhip agent started|finished|failed|blocked` (and gjc-run.sh /
+# review-run.sh narration) emit canonical `session.*` events (events.rs:772-775), and an
+# exact `agent.*` route does NOT match a `session.*` event (router.rs route_candidates).
+# So these routes key on `session.*` (what is actually emitted) while the template emits
+# the user-facing `kind=agent.*` taxonomy that the relay + design-system.json speak.
+[[routes]]
+event = "session.started"
+sink = "discord"
+template = "GJCEMBED1 kind=agent.started actor={agent_name} repo={project} :: {summary}"
+
+[[routes]]
+event = "session.finished"
+sink = "discord"
+template = "GJCEMBED1 kind=agent.finished actor={agent_name} repo={project} :: {summary}"
+
+[[routes]]
+event = "session.failed"
+sink = "discord"
+template = "GJCEMBED1 kind=agent.failed actor={agent_name} repo={project} :: {summary}"
+
+[[routes]]
+event = "session.blocked"
+sink = "discord"
+template = "GJCEMBED1 kind=agent.blocked actor={agent_name} repo={project} :: {summary}"
+
+[[routes]]
+event = "github.pr-status-changed"
+sink = "discord"
+# payload carries old_status/new_status (no plain `status`), repo, number, title, url.
+# title is free-form -> tail only; new_status/repo/url are head-safe.
+template = "GJCEMBED1 kind=github.pr-status-changed repo={repo} status={new_status} url={url} :: PR #{number} ({title}) is now {new_status}"
+
+[monitors]
+poll_interval_secs = 60
+github_api_base = "https://api.github.com"
+workspace = []
+
+[monitors.git]
+
+[monitors.tmux]
+sessions = []
+
+{{MONITOR_BLOCKS}}
+
+# --- Issue + CI embed routes (added 2026-07-07, post-RUSTSEC-run fixes). ------------------
+# These kinds previously had NO route: issue-closed/commented/ci-* fell back to the
+# per-repo monitor channel as plain compact text, and issue-opened was captured by the
+# localfile spool route above so its per-repo human notice NEVER fired (router semantics:
+# any matched route suppresses the fallback; see src/router.rs resolve()). Each route
+# below deliberately has no `channel` — target resolution is route.channel > event.channel
+# > default, so the event's per-repo monitor channel is preserved.
+# CI events arrive pre-merged by GitHubCiBatcher (one event per run with
+# passed_count/failed_count/total_count); {number} is omitted from CI templates because
+# branch pushes carry no PR number and unresolved placeholders render literally.
+[[routes]]
+event = "github.issue-opened"
+sink = "discord"
+template = "GJCEMBED1 kind=github.issue-opened repo={repo} :: Issue #{number} opened — {title}"
+
+[[routes]]
+event = "github.issue-closed"
+sink = "discord"
+template = "GJCEMBED1 kind=github.issue-closed repo={repo} :: Issue #{number} closed — {title}"
+
+[[routes]]
+event = "github.issue-commented"
+sink = "discord"
+template = "GJCEMBED1 kind=github.issue-commented repo={repo} :: New comment on #{number} — {title}"
+
+[[routes]]
+event = "github.ci-passed"
+sink = "discord"
+template = "GJCEMBED1 kind=github.ci-passed repo={repo} url={url} :: {passed_count}/{total_count} checks passed"
+
+[[routes]]
+event = "github.ci-failed"
+sink = "discord"
+template = "GJCEMBED1 kind=github.ci-failed repo={repo} url={url} :: {failed_count}/{total_count} checks failed ({passed_count} passed)"
+
+[[routes]]
+event = "github.ci-cancelled"
+sink = "discord"
+template = "GJCEMBED1 kind=github.ci-cancelled repo={repo} url={url} :: run cancelled ({passed_count}/{total_count} had passed)"
+
+[[routes]]
+event = "github.ci-started"
+sink = "discord"
+template = "GJCEMBED1 kind=github.ci-started repo={repo} url={url} :: checks in progress"

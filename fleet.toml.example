@@ -1,0 +1,71 @@
+# fleet.toml — single host-local config surface for the gjc fleet.
+#
+# Copy to ~/.config/gjc-fleet/fleet.toml and fill in YOUR values.
+# UNTRACKED BY DESIGN: this file holds numeric Discord channel IDs — never
+# commit it, never paste it into issues or docs. It holds NO tokens/secrets:
+# those live in the files pointed at by [secrets] (referenced by NAME only).
+#
+# Reference: docs/45-fleet-config.md. Renderer: render/render.sh.
+
+[operator]
+github_owner  = "example-owner"       # human GitHub account owning the target repos
+bot_login     = "example-owner-bot"   # bot GitHub account (the active `gh` login)
+bot_git_name  = "example-owner-bot"
+bot_git_email = "000000+example-owner-bot@users.noreply.github.com"
+
+[paths]
+# Host-derived — the renderer defaults every key from $HOME and bot_login.
+# Uncomment only to override.
+# home       = "/home/youruser"
+# gh_root    = "/home/youruser/github/example-owner-bot/fleet"    # pipeline clone root
+# fleet_repo = "/home/youruser/github/example-owner-bot/gjc-fleet" # this repo's checkout
+
+[discord.channels]
+# name → numeric channel ID. THE untracked layer (repo policy: no numeric IDs
+# in git, ever). Names are referenced by [[repos]].channel and the renderer.
+default       = "000000000000000001"  # clawhip [defaults] — agent narration (#gjc-events)
+gjc-events    = "000000000000000001"
+gjc-approvals = "000000000000000002"
+gjc-lab       = "000000000000000003"  # throwaway canary channel
+# one per fleet repo (per-repo monitor notices):
+example-repo  = "000000000000000004"
+
+[relay]
+bind = "127.0.0.1:25295"
+
+[brain]
+model            = "example/model-id"
+nanogpt_base_url = "https://nano-gpt.com/api/v1/chat/completions"
+
+[review]
+model_primary = "opus"
+model_fast    = "sonnet"
+
+[pins]
+# Upstream engines — never vendored; installed via their own channels.
+clawhip    = "0.6.11"    # cargo install clawhip --version <pin> --locked
+gajae_code = "0.9.0"     # bun add -g gajae-code@<pin>
+hermes_ref = "7fde19a"   # git checkout <pin> of NousResearch/hermes-agent
+
+[cadence]
+# Defaults match the shipped unit templates; informational unless you also
+# adjust systemd/ timers.
+janitor_every  = "2min"
+adapter_backup = "5min"
+detector_every = "5min"
+gate_every     = "10min"
+
+[secrets]
+# POINTERS ONLY — file paths + key names, never values.
+# hermes_env:  GITHUB_TOKEN, NANOGPT_API_KEY, DISCORD_BOT_TOKEN, DISCORD_HOME_CHANNEL
+# clawhip_env: CLAWHIP_GITHUB_TOKEN, CLAWHIP_DISCORD_BOT_TOKEN, CLAWHIP_DISCORD_API_BASE
+hermes_env  = "~/.hermes/.env"
+clawhip_env = "~/.clawhip/clawhip.env"
+
+# One [[repos]] block per fleet target repo — drives the clawhip
+# [[monitors.git.repos]] blocks and the pipeline's repo auto-discovery scope.
+# channel is a NAME resolved via [discord.channels].
+[[repos]]
+name    = "example-repo"
+github  = "example-owner/example-repo"
+channel = "example-repo"
