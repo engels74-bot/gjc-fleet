@@ -7,5 +7,5 @@ Type=oneshot
 User=cvps
 Environment=HOME=/home/cvps
 Environment=PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/cvps/github/engels74-bot/gjc-bot/merge-gate.sh
+ExecStart=/home/cvps/github/engels74-bot/gjc-bot-scripts/review/merge-gate.sh
 Nice=15

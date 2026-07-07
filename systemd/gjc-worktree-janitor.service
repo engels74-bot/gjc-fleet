@@ -11,5 +11,5 @@ Environment=HOME=/home/cvps
 # supplement. (Occupancy is primarily a PATH-independent /proc cwd scan anyway.)
 Environment=PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
 # Deliberately NO PrivateTmp — the janitor must see the user tmux socket in /tmp.
-ExecStart=/home/cvps/github/engels74-bot/gjc-bot/gjc-worktree-janitor.sh
+ExecStart=/home/cvps/github/engels74-bot/gjc-bot-scripts/maintenance/gjc-worktree-janitor.sh
 Nice=10

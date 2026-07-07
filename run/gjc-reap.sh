@@ -15,10 +15,10 @@
 set -uo pipefail
 
 STATE_DIR="${REPO_BOT_STATE:-$HOME/.repo-bot}"
-SCRIPTS_DIR="${REPO_BOT_SCRIPTS:-$HOME/scripts/repo-bot}"
+SCRIPTS_DIR="${REPO_BOT_SCRIPTS:-$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd)}"
 LOG="$STATE_DIR/gjc-run.log"
 TMUX_BIN="${TMUX_BIN_OVERRIDE:-/home/linuxbrew/.linuxbrew/bin/tmux}"
-JANITOR="${JANITOR_BIN:-$SCRIPTS_DIR/gjc-worktree-janitor.sh}"
+JANITOR="${JANITOR_BIN:-$SCRIPTS_DIR/maintenance/gjc-worktree-janitor.sh}"
 
 mkdir -p "$STATE_DIR"
 log() { printf '%s [gjc-reap] %s\n' "$(date -Is)" "$*" >>"$LOG"; }

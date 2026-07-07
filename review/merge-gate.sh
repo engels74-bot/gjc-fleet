@@ -25,7 +25,7 @@ CURL="${CURL_BIN:-/usr/bin/curl}"
 CLAWHIP="${CLAWHIP_BIN:-/home/cvps/.cargo/bin/clawhip}"
 FLOCK="${FLOCK_BIN:-/usr/bin/flock}"
 # Shared design-system embed helper (Discord unification).
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/discord-embed.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/discord-embed.sh"
 GH_OWNER="${REPO_BOT_GH_OWNER:-engels74}"
 BOT="${REPO_BOT_LOGIN:-engels74-bot}"
 # REPOS auto-scales to every cloned bot repo (G7 fan-out = just clone the repos).

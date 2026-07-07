@@ -7,7 +7,7 @@ Type=oneshot
 User=cvps
 Environment=HOME=/home/cvps
 Environment=PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/cvps/github/engels74-bot/gjc-bot/review-detector.sh
+ExecStart=/home/cvps/github/engels74-bot/gjc-bot-scripts/review/review-detector.sh
 Nice=10
 # The detector fire-and-forgets a detached handler run (review-run.sh -> setsid).
 # KillMode=process keeps that run alive after this oneshot's main process exits

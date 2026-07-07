@@ -23,7 +23,7 @@
 set -uo pipefail
 
 STATE_DIR="${REPO_BOT_STATE:-$HOME/.repo-bot}"
-SCRIPTS_DIR="${REPO_BOT_SCRIPTS:-$HOME/scripts/repo-bot}"
+SCRIPTS_DIR="${REPO_BOT_SCRIPTS:-$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd)}"
 GH_ROOT="${REPO_BOT_GH_ROOT:-$HOME/github/engels74-bot}"
 GH_OWNER="${REPO_BOT_GH_OWNER:-engels74}"
 LOCK="$STATE_DIR/gjc.lock"
@@ -32,7 +32,7 @@ LOG="$STATE_DIR/gjc-run.log"
 GJC_REAL="${GJC_REAL_BIN:-/home/cvps/.bun/bin/gjc}"
 GH="${GH_BIN:-/home/linuxbrew/.linuxbrew/bin/gh}"
 CLAWHIP="${CLAWHIP_BIN:-/home/cvps/.cargo/bin/clawhip}"
-JANITOR="${JANITOR_BIN:-$SCRIPTS_DIR/gjc-worktree-janitor.sh}"
+JANITOR="${JANITOR_BIN:-$SCRIPTS_DIR/maintenance/gjc-worktree-janitor.sh}"
 GIT="${GIT_BIN:-/usr/bin/git}"
 FLOCK="${FLOCK_BIN:-/usr/bin/flock}"
 TIMEOUT="${TIMEOUT_BIN:-/usr/bin/timeout}"

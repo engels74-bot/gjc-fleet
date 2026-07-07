@@ -17,7 +17,7 @@
 set -uo pipefail
 
 STATE_DIR="${REPO_BOT_STATE:-$HOME/.repo-bot}"
-SCRIPTS_DIR="${REPO_BOT_SCRIPTS:-$HOME/scripts/repo-bot}"
+SCRIPTS_DIR="${REPO_BOT_SCRIPTS:-$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd)}"
 GH_ROOT="${REPO_BOT_GH_ROOT:-$HOME/github/engels74-bot}"
 GH_OWNER="${REPO_BOT_GH_OWNER:-engels74}"
 SPOOL="${ISSUE_SPOOL:-$STATE_DIR/issue-spool.jsonl}"
@@ -30,7 +30,7 @@ JQ="${JQ_BIN:-/home/linuxbrew/.linuxbrew/bin/jq}"
 CURL="${CURL_BIN:-/usr/bin/curl}"
 # shellcheck disable=SC2034  # config parity; lib/discord-embed.sh resolves its own clawhip
 CLAWHIP="${CLAWHIP_BIN:-/home/cvps/.cargo/bin/clawhip}"
-GJC_RUN="${GJC_RUN_BIN:-$SCRIPTS_DIR/gjc-run.sh}"
+GJC_RUN="${GJC_RUN_BIN:-$SCRIPTS_DIR/run/gjc-run.sh}"
 NOTIFY_CHANNEL="${ISSUE_NOTIFY_CHANNEL:-1523097859988390008}"   # #gjc-events
 BRAIN_MODEL="${BRAIN_MODEL:-minimax/minimax-m3}"
 NANOGPT_URL="${NANOGPT_URL:-https://nano-gpt.com/api/v1/chat/completions}"
