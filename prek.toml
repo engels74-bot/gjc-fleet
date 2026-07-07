@@ -1,12 +1,11 @@
-# prek.toml — pre-commit hooks configuration
+# prek.toml — pre-commit hooks configuration for the gjc-fleet monorepo
 # Docs: https://prek.j178.dev/configuration/
 #
 # Run `prek install -t pre-commit -t commit-msg` once to activate the hooks,
 # and `prek run --all-files` to lint the whole tree.
 #
-# This is a DOCUMENTATION repo (markdown only), so the reference config's
-# project-specific Shell quality gate (shellcheck) is intentionally omitted —
-# there are no shell scripts to lint here.
+# Covers pipeline/ (bash automation), relay/ (Rust crate + bash runtime helpers),
+# render/ + bootstrap/ (bash tooling), and docs/ (markdown).
 
 # Builtin hooks — fast, offline, Rust-native.
 [[repos]]
@@ -33,11 +32,23 @@ hooks = [
   { id = "conventional-pre-commit", stages = ["commit-msg"] },
 ]
 
-# Secret / credential leak guard — these docs reference secret material by
-# name/role only; nothing may ever be hardcoded or committed.
+# Secret / credential leak guard. Custody lives OUTSIDE this repo by design:
+# tokens in ~/.hermes/.env and ~/.clawhip/clawhip.env; numeric Discord channel
+# IDs only in the untracked ~/.config/gjc-fleet/fleet.toml layer. Nothing may
+# ever be hardcoded, logged, or committed.
 [[repos]]
 repo = "https://github.com/gitleaks/gitleaks"
 rev = "v8.30.1"
 hooks = [
   { id = "gitleaks" },
+]
+
+# Shell quality gate — pipeline scripts, relay runtime helpers, render/bootstrap tooling.
+[[repos]]
+repo = "https://github.com/shellcheck-py/shellcheck-py"
+rev = "v0.10.0.1"
+hooks = [
+  # severity=warning drops info-level style nits (e.g. SC2016 on the intentional
+  # single-quoted jq programs) while still gating real warnings and errors.
+  { id = "shellcheck", args = ["--severity=warning"] },
 ]
