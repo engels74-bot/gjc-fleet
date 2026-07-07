@@ -1,0 +1,23 @@
+[package]
+name = "gjc-relay"
+version = "1.0.0"
+edition = "2021"
+description = "Loopback transform relay between clawhip and the Discord REST API (GJCEMBED1 envelope -> embeds)."
+
+[[bin]]
+name = "gjc-relay"
+path = "src/main.rs"
+
+[dependencies]
+tiny_http = "0.12"
+ureq = { version = "2", default-features = false, features = ["tls"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+chrono-tz = "0.9"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

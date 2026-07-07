@@ -1,0 +1,122 @@
+{
+ "version": 1,
+ "note": "Single source of truth for GJC Discord embeds. Read by gjc-relay AND repo-bot discord-embed.sh. color is the Discord integer form of the hex in the plan taxonomy.",
+ "timezone": "Europe/Berlin",
+ "kinds": {
+  "agent.started": {
+   "color": 5793266,
+   "emoji": "\ud83d\ude80",
+   "title": "\ud83d\ude80 Agent started"
+  },
+  "agent.finished": {
+   "color": 3066993,
+   "emoji": "\u2705",
+   "title": "\u2705 Agent finished"
+  },
+  "agent.failed": {
+   "color": 15158332,
+   "emoji": "\u274c",
+   "title": "\u274c Agent failed"
+  },
+  "agent.approval-requested": {
+   "color": 15844367,
+   "emoji": "\ud83d\udd14",
+   "title": "\ud83d\udd14 Approval requested"
+  },
+  "github.issue-opened": {
+   "color": 1752220,
+   "emoji": "\ud83d\udce5",
+   "title": "\ud83d\udce5 Issue opened"
+  },
+  "issue.dispatched": {
+   "color": 3066993,
+   "emoji": "\ud83e\udd16",
+   "title": "\ud83e\udd16 Issue dispatched"
+  },
+  "issue.queued": {
+   "color": 15844367,
+   "emoji": "\u23f3",
+   "title": "\u23f3 Issue queued"
+  },
+  "issue.skipped": {
+   "color": 9807270,
+   "emoji": "\u23ed\ufe0f",
+   "title": "\u23ed\ufe0f Issue skipped"
+  },
+  "issue.failed": {
+   "color": 15158332,
+   "emoji": "\u26a0\ufe0f",
+   "title": "\u26a0\ufe0f Issue dispatch failed"
+  },
+  "issue.triage-error": {
+   "color": 15158332,
+   "emoji": "\u2753",
+   "title": "\u2753 Triage failed"
+  },
+  "github.pr-opened": {
+   "color": 10181046,
+   "emoji": "\ud83d\udd00",
+   "title": "\ud83d\udd00 PR opened"
+  },
+  "github.pr-merged": {
+   "color": 3066993,
+   "emoji": "\ud83c\udf89",
+   "title": "\ud83c\udf89 PR merged"
+  },
+  "github.pr-status-changed": {
+   "color": 10181046,
+   "emoji": "\ud83d\udd00",
+   "title": "\ud83d\udd00 PR update"
+  },
+  "agent.blocked": {
+   "color": 15844367,
+   "emoji": "\u23f8\ufe0f",
+   "title": "\u23f8\ufe0f Agent blocked"
+  },
+  "merge-gate.advisory": {
+   "color": 15105570,
+   "emoji": "\ud83d\udd0e",
+   "title": "\ud83d\udd0e Advisory merge gate"
+  },
+  "review": {
+   "color": 6122878,
+   "emoji": "\ud83d\udc40",
+   "title": "\ud83d\udc40 Review"
+  },
+  "default": {
+   "color": 9807270,
+   "emoji": "\ud83d\udcac",
+   "title": "\ud83d\udcac {kind}"
+  },
+  "github.issue-closed": {
+   "color": 9807270,
+   "emoji": "\u2705",
+   "title": "\u2705 Issue closed"
+  },
+  "github.issue-commented": {
+   "color": 6122878,
+   "emoji": "\ud83d\udcac",
+   "title": "\ud83d\udcac Issue comment"
+  },
+  "github.ci-passed": {
+   "color": 3066993,
+   "emoji": "\u2705",
+   "title": "\u2705 CI passed"
+  },
+  "github.ci-failed": {
+   "color": 15158332,
+   "emoji": "\u274c",
+   "title": "\u274c CI failed"
+  },
+  "github.ci-started": {
+   "color": 15844367,
+   "emoji": "\u23f3",
+   "title": "\u23f3 CI running"
+  },
+  "github.ci-cancelled": {
+   "color": 9807270,
+   "emoji": "\u23ed\ufe0f",
+   "title": "\u23ed\ufe0f CI cancelled"
+  }
+ }
+}
