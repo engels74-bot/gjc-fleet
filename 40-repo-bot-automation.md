@@ -289,7 +289,8 @@ Two buckets under `<repo>.gajae-code-worktrees/`:
 
 Nothing in this system deletes remote branches or merges PRs; `stale-branches.sh` only reports.
 Historical context: the "worktree-hygiene jam" (deterministic worktree left on a branch →
-`worktree_target_mismatch` relaunch loop) was the runbook's "critical recurring bug", solved by
+`worktree_target_mismatch` relaunch loop) was the "critical recurring bug" flagged in the earlier
+hermes-stack build-log (now retired), solved by
 exactly this unique-worktree + janitor + reap design (see
 [90-glossary-and-open-questions.md](90-glossary-and-open-questions.md)).
 
@@ -355,8 +356,8 @@ State in `~/.repo-bot/`: locks (`gjc.lock`, `review.lock`, `issues.lock`, `merge
   reject+retry). Mitigated behaviorally via `~/.hermes/SOUL.md` delegation rules (rebase before
   push, never force-push); a structural lock remains a possible future upgrade.
 - Is the interactive `wrapper` lane (and a `tmux.stale` → `gjc-reap` route) intended to be
-  re-enabled, or is `launch`/`_exec` the permanent design? (The runbook notes the coordinator
-  rewire was deliberately HELD by user choice.)
+  re-enabled, or is `launch`/`_exec` the permanent design? (The earlier build-log noted the
+  coordinator rewire was deliberately HELD by user choice.)
 - `merge-gate.sh` and `review-run.sh` share `review.lock` — confirm this mutual exclusion
   (merge-gate defers while a handler mutates the PR) is a deliberate contract rather than
   incidental lock reuse.
@@ -398,3 +399,7 @@ State in `~/.repo-bot/`: locks (`gjc.lock`, `review.lock`, `issues.lock`, `merge
   at the stage-dirs and are byte-identical to `gjc-bot-scripts/systemd/`, services `Result=success`,
   timers/path `active`. New findings: glob auto-discovery now also matches the co-located infra
   repos; `restore.sh` still names the dead path (both raised as open questions). Status → verified.
+- 2026-07-07 (runbook-retirement pass) — Reframed the two references to the earlier hermes-stack
+  build-log/runbook (the `worktree_target_mismatch` "critical recurring bug" note and the
+  coordinator-rewire open-question aside) to past tense; that build-log has been deleted and this
+  doc set is the single source of truth.

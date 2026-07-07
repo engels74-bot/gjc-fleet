@@ -27,13 +27,14 @@ suggests. Each page is self-contained and independently editable; every page end
 | [40-repo-bot-automation.md](40-repo-bot-automation.md) | The shell glue pipeline, script by script; scheduling map; worktree lifecycle |
 | [50-configuration-and-state.md](50-configuration-and-state.md) | Consolidated config/state/secret-custody inventory (names only, no values) |
 | [60-data-flow-and-integration.md](60-data-flow-and-integration.md) | **The heart**: every integration seam + the end-to-end sequence of a real job |
-| [70-deployment-and-operations.md](70-deployment-and-operations.md) | Services, scheduling, network posture, identities, logs; runbook relationship |
-| [90-glossary-and-open-questions.md](90-glossary-and-open-questions.md) | Terms/aliases, the 2026-07-06 wave timeline, runbook staleness, consolidated open questions |
+| [70-deployment-and-operations.md](70-deployment-and-operations.md) | Services, scheduling, network posture, identities, logs; start/stop/rollback procedures |
+| [90-glossary-and-open-questions.md](90-glossary-and-open-questions.md) | Terms/aliases, the 2026-07-06 wave timeline, consolidated open questions |
 
-Related, outside this directory: `~/downloads/hermes-stack-runbook.md` — the operational
-runbook and build history (Phases A–G). Use it for procedures; it predates gjc-relay, so this doc
-set supersedes it for topology. Its current path is `~/downloads/`, not `~/documentation/` as
-earlier drafts assumed — see [00-overview.md](00-overview.md#open-questions).
+This doc set is the single source of truth. An earlier hermes-stack build-log/runbook that once
+held the operational procedures and build history (Phases A–G) has been retired and deleted;
+70-deployment-and-operations.md now owns start/stop/rollback, and the build phases survive as the
+"Phase A–G" glossary entry in
+[90-glossary-and-open-questions.md](90-glossary-and-open-questions.md#glossary).
 
 ## System at a glance
 
@@ -87,7 +88,11 @@ GitHub ──poll── clawhip ──spool──▶ repo-bot ──runs──�
   also reorganized from a flat script dir into pipeline-stage subfolders (`intake/` `run/`
   `review/` `maintenance/` `lib/` `systemd/`). Fixed the "System at a glance" table's repo-bot
   Source cell, which still cited the dead `~/scripts/repo-bot`; confirmed the new path and layout
-  against the live filesystem and all four systemd units' `ExecStart=`. Corrected the runbook
-  cross-reference to its live path, `~/downloads/hermes-stack-runbook.md` (not `~/documentation/`);
+  against the live filesystem and all four systemd units' `ExecStart=`. Corrected the then-existing
+  runbook cross-reference to its on-disk path at the time (later retired — see the following entry);
   flagged in 00-overview's Open questions since that move wasn't part of this session's known
   changes. No secrets or numeric IDs introduced.
+- 2026-07-07 (runbook-retirement pass) — The earlier hermes-stack build-log/runbook has been
+  deleted; this doc set is now stated as the single source of truth. Rewrote the "Related, outside
+  this directory" pointer accordingly and dropped "runbook relationship / staleness" from the page
+  table. (Repo-split clarification landed in 00-overview and 70.)

@@ -11,8 +11,8 @@ sources:
 maintainer_notes: >
   Edit this file in isolation. Keep headings stable; append to Changelog at the bottom.
   This page was ADDED beyond the originally prescribed doc layout: the relay is a fourth,
-  locally-authored component that the existing runbook does not mention at all, and it is
-  in-path on every production Discord post — it needs its own page.
+  locally-authored component that the earlier hermes-stack build-log (now retired) never mentioned,
+  and it is in-path on every production Discord post — it needs its own page.
 -->
 
 # gjc-relay (and the Discord embed pipeline)
@@ -119,8 +119,8 @@ Live journal evidence (2026-07-06): `[transform] POST …/messages kind=github.p
   emitter.
 - Documented in `~/.omc/plans/discord-unification-plan.md` (design),
   `~/.omc/research/discord-unification-findings.md` (pre-plan investigation), and
-  `~/.omc/progress.txt` (execution log, all phases verified). **The runbook
-  (`~/documentation/hermes-stack-runbook.md`) predates the relay entirely and never mentions it.**
+  `~/.omc/progress.txt` (execution log, all phases verified). **The earlier hermes-stack build-log
+  (now retired) predated the relay entirely and never mentioned it.**
 
 ## Open questions
 
@@ -165,3 +165,6 @@ Live journal evidence (2026-07-06): `[transform] POST …/messages kind=github.p
   and `clawhip src/dispatch.rs:375` (`contents.join("\n")`) still match. Resolved the
   `~/.gjc-relay/.omc/` open question (contains only oh-my-claudecode `sessions/`/`state/` dirs from
   dev sessions — not relay-runtime-relevant).
+- 2026-07-07 (runbook-retirement pass) — Reframed the two references to the earlier hermes-stack
+  build-log/runbook (maintainer note + the "predated the relay" line) to past tense; that build-log
+  has been deleted and this doc set is the single source of truth. No path now points at it.

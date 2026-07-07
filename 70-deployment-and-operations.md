@@ -3,25 +3,33 @@ status: verified         # draft | reviewed | verified
 last_verified: 2026-07-07
 sources:
   - /etc/systemd/system/ (live units, via systemctl cat/status)
-  - ~/downloads/hermes-stack-runbook.md (operational procedures — linked, not duplicated)
   - ~/.repo-bot/*.log, journalctl evidence gathered 2026-07-06
 maintainer_notes: >
   Edit this file in isolation. Keep headings stable; append to Changelog at the bottom.
-  This page maps WHAT runs WHERE. Step-by-step operating procedures stay in the runbook.
+  This page maps WHAT runs WHERE and owns the operating procedures — there is no separate runbook.
 -->
 
 # Deployment & operations
 
-> Architecture-level map of processes, services, scheduling, and logs. For hands-on procedures
-> (start/stop, rollback, phase history) use the runbook:
-> `~/downloads/hermes-stack-runbook.md` — but note its staleness flags in
-> [90-glossary-and-open-questions.md](90-glossary-and-open-questions.md#runbook-staleness).
+> Architecture-level map of processes, services, scheduling, and logs — and the owner of
+> hands-on procedures. Start/stop is `systemctl {start,stop,restart} <unit>` on the units in the
+> Service map below (all `User=cvps`, system-level); rollback is `~/scripts/backuprestore/restore.sh
+> --apply` (see [Backup / rollback](#backup--rollback)). The earlier hermes-stack build-log/runbook
+> that once held these procedures has been retired; this doc set supersedes it.
 
 ## Where things run
 
 Everything runs **natively on this host as user `cvps`** (no Docker), managed by **system-level
 systemd units** (not user units — `systemctl --user` has no fleet units; there is no crontab).
-Rationale from the runbook: sharing the host filesystem, tmux, git credentials, and Codex OAuth.
+Rationale: sharing the host filesystem, tmux, git credentials, and Codex OAuth.
+
+**Source vs. runtime (a common misread).** The three upstream engines live as source checkouts
+under `~/github/engels74/gjc/` (`gajae-code`, `hermes-agent`, `clawhip` — upstream remotes, not the
+user's own repos), but the services run from *built/installed* locations, not those checkouts:
+`gjc` from `~/.bun/bin/gjc`, hermes from `~/.hermes/hermes-agent/venv/bin/python`, clawhip from
+`~/.cargo/bin/clawhip`, and the locally-authored relay from `~/.gjc-relay/gjc-relay`. The `ExecStart=`
+paths in the Service map below are the authoritative runtime locations. See
+[00-overview.md](00-overview.md#where-each-component-lives-and-runs) for the full split.
 
 ## Service map
 
@@ -67,8 +75,8 @@ issue-triage-fetch}.sh` are real-file (non-symlink) shims that now `exec` the ne
 Loopback only; no inbound ports for the fleet: `127.0.0.1:25294` (clawhip daemon),
 `127.0.0.1:25295` (gjc-relay). Hermes' webhook platform (would be 0.0.0.0:8644) and API server
 are **disabled**. All external I/O is outbound: GitHub API, NanoGPT API (repo-bot triage/gate),
-OpenAI Codex API (hermes brain, since 2026-07-07), Discord API. This matches
-the runbook's "no inbound ports / no standing sudo" safety rails.
+OpenAI Codex API (hermes brain, since 2026-07-07), Discord API. This upholds the fleet's
+"no inbound ports / no standing sudo" safety rails.
 
 ## Identities
 
@@ -104,27 +112,18 @@ components they monitor.
 ## Backup / rollback
 
 `~/scripts/backuprestore/backup-now.sh` (snapshot) and `restore.sh --apply` (full revert;
-`--purge-repos` also removes clones) — per the runbook, every phase artifact is registered for
+`--purge-repos` also removes clones) — every phase artifact is registered for
 teardown. Config waves additionally leave dated `.bak-*` files next to each edited file
 ([50-configuration-and-state.md](50-configuration-and-state.md#backups--rollback)).
 
-## Relationship to the runbook
-
-The runbook (`~/downloads/hermes-stack-runbook.md`) is three stacked layers: a
-SESSION HANDOFF snapshot (2026-07-05), the PHASE G execution log (2026-07-06), and the original
-phase-by-phase build plan. Use it for: procedures (systemctl commands, pause-a-lane, rollback),
-build history (Phases A–G), and decision rationale. **Do not use it for current topology** — it
-predates gjc-relay entirely and parts of it describe a superseded model (DeepSeek-era). The
-architecture pages here supersede it for structure; staleness specifics are catalogued in
-[90-glossary-and-open-questions.md](90-glossary-and-open-questions.md#runbook-staleness).
+> Historical note: an earlier hermes-stack build-log/runbook (a SESSION HANDOFF snapshot, the
+> Phase-G execution log, and the original phase-by-phase build plan) once held the procedures and
+> build history for this stack. It has been retired and deleted; this doc set is its successor and
+> single source of truth. Build phases survive as the "Phase A–G" glossary entry in
+> [90-glossary-and-open-questions.md](90-glossary-and-open-questions.md#glossary).
 
 ## Open questions
 
-- The runbook now lives at `~/downloads/hermes-stack-runbook.md` (it was cited as
-  `~/documentation/hermes-stack-runbook.md`, which no longer exists — the only copy on disk is under
-  `~/downloads/`). Is `~/downloads/` its intended home or a transient location that should move back
-  under `~/documentation/`? All citations updated to the live path 2026-07-07.
-- Should the runbook be updated to reference this doc set (and the relay), or frozen as history?
 - `gjc-worktree-janitor.timer` uses `Persistent=false`; the other timers' persistence flags were
   not individually recorded — worth capturing if boot-catch-up behavior ever matters.
 - No monitoring exists for the hermes cron ticker beyond `hermes cron status` run manually;
@@ -144,5 +143,11 @@ architecture pages here supersede it for structure; staleness specifics are cata
   active. Documented the hermes cron real-file wrappers now `exec`-ing the new subfolder paths. Added
   a git-identity note (`~/.gitconfig` `includeIf` for `engels74-bot` verified still enforced).
   Long-running daemons, loopback network posture, and identities re-confirmed — no drift. Fixed
-  runbook path drift (`~/documentation/…` → live `~/downloads/hermes-stack-runbook.md`) and logged
-  it as an open question.
+  runbook path drift and logged it as an open question.
+- 2026-07-07 (runbook-retirement pass) — The earlier hermes-stack build-log/runbook has been
+  deleted; this page now owns start/stop/rollback procedures inline (top blockquote). Removed it
+  from `sources`, deleted the "Relationship to the runbook" section (collapsed to a one-line
+  historical note) and the two now-moot open questions about its path/future. Added a "Source vs.
+  runtime" note under "Where things run" reinforcing the repo split — upstream checkouts in
+  `~/github/engels74/gjc/` vs the built/installed runtime locations the `ExecStart=` paths point at;
+  verified live via `systemctl cat`.

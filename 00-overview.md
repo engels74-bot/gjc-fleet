@@ -3,7 +3,6 @@ status: draft            # draft | reviewed | verified
 last_verified: 2026-07-07
 sources:
   - all component pages in this directory (10, 20, 30, 35, 40)
-  - ~/downloads/hermes-stack-runbook.md (history — moved from ~/documentation/, see Open questions)
 maintainer_notes: >
   Edit this file in isolation. Keep headings stable; append to Changelog at the bottom.
   This page must stay readable in under five minutes — push detail to component pages.
@@ -32,6 +31,34 @@ Also on the field: **`engels74-bot`** (the bot's GitHub identity), **`augmentcod
 PR reviewer the pipeline reacts to), **headless `claude`** (Claude Code, used only as the review
 handler), and **NanoGPT/`minimax-m3`** (the cheap no-tools "brain model" for triage and merge
 verdicts).
+
+## Where each component lives and runs
+
+A common misread: the source checkouts are **not** where the services run. Two distinct GitHub
+areas, and a build/install step in between:
+
+- **`~/github/engels74-bot/` — the user's OWN `gjc-*` projects**: `gjc-bot-scripts` (the repo-bot
+  shell glue), `gjc-server-tool` (the `stackman` ops console), and `gjc-architecture` (this doc
+  set). These commit as the `engels74-bot` identity.
+- **`~/github/engels74/gjc/` — three UPSTREAM third-party engines**, cloned and built locally (they
+  are *not* under `engels74-bot`, and *not* the user's own repos): `gajae-code`
+  (remote `Yeachan-Heo/gajae-code`), `hermes-agent` (remote `nousresearch/hermes-agent`), and
+  `clawhip` (remote `Yeachan-Heo/clawhip`).
+
+The services do **not** run from those upstream source checkouts. Source is built/installed into a
+separate runtime location, and the units run from there:
+
+| Component | Source checkout | Runs from (installed/built) |
+|---|---|---|
+| gajae-code (`gjc`) | `~/github/engels74/gjc/gajae-code` | `~/.bun/bin/gjc` (installed bun binary) |
+| hermes-agent | `~/github/engels74/gjc/hermes-agent` | `~/.hermes/hermes-agent/venv/bin/python` (WorkingDirectory `~/.hermes`) |
+| clawhip | `~/github/engels74/gjc/clawhip` | `~/.cargo/bin/clawhip` (installed cargo binary) |
+| gjc-relay | `~/.gjc-relay/src` (locally authored) | `~/.gjc-relay/gjc-relay` (built binary) |
+
+Pattern: **upstream source in `~/github/engels74/gjc/` → built/installed into `~/.bun/bin` /
+`~/.hermes` / `~/.cargo/bin` (and the locally-authored relay into `~/.gjc-relay`) → the services
+run from there.** The `~/.gjc`, `~/.hermes`, `~/.clawhip` dirs in the table above are config/state
+homes, not the source trees.
 
 ## Topology
 
@@ -85,10 +112,11 @@ sequence diagram: [60-data-flow-and-integration.md](60-data-flow-and-integration
 
 ## History in one breath
 
-Built incrementally per the runbook's Phases A–G (2026-07-05/06): hermes brain → bot GitHub
+Built incrementally through Phases A–G (2026-07-05/06): hermes brain → bot GitHub
 identity → Discord → clawhip → gjc + Coordinator MCP → automation lanes → fan-out to 6 repos.
-The same evening, a separate "Discord unification" wave added gjc-relay and the embed design
-system — which the runbook does not yet know about. A follow-up wave (2026-07-07, after the first
+(Those phases were tracked in an earlier hermes-stack build-log, since retired and superseded by
+this doc set.) The same evening, a separate "Discord unification" wave added gjc-relay and the
+embed design system — which post-dated that build-log entirely. A follow-up wave (2026-07-07, after the first
 full EasyHDR pipeline exercise) added issue/CI embed routes, multi-embed batch splitting in the
 relay, and hermes tuning — and hermes' brain model switched from NanoGPT/minimax-m3 to the Codex
 subscription (`gpt-5.5`). Timeline & staleness:
@@ -106,11 +134,6 @@ subscription (`gpt-5.5`). Timeline & staleness:
 
 ## Open questions
 
-- The runbook (`hermes-stack-runbook.md`, cited in this page's metadata) is currently at
-  `~/downloads/hermes-stack-runbook.md`, not `~/documentation/` as prior drafts assumed —
-  confirmed live on disk this pass. Downloads is an unusual permanent home for a reference doc;
-  unclear if this is its intended stable location or a stray copy. > [inferred: not part of this
-  session's known repo-rename/reorg changes]
 - See the consolidated list in
   [90-glossary-and-open-questions.md](90-glossary-and-open-questions.md#open-questions).
 
@@ -128,5 +151,10 @@ subscription (`gpt-5.5`). Timeline & staleness:
   node re-checked against the actual stage order (intake → run → review/merge-gate) — unchanged,
   still accurate. Rows 1–4 of the component table re-confirmed against live paths; no drift found.
   No `gjc-server-tool`/stackman ops-console reference exists on this page (nothing to rename).
-  Also caught unrelated drift: the runbook source file has moved to `~/downloads/`; flagged above
-  rather than silently assumed stable.
+- 2026-07-07 (runbook-retirement pass) — The earlier hermes-stack build-log/runbook has been
+  deleted; this doc set is now the single source of truth. Removed it from this page's `sources`
+  and dropped the open question about its on-disk path; reframed the Phases A–G history note to
+  past tense. Added a "Where each component lives and runs" subsection codifying the repo split
+  (`engels74-bot/gjc-*` = own projects vs upstream `engels74/gjc/*` engines) and the
+  source→built/installed→service-runs-from-there pattern; verified live against `git remote` and
+  `systemctl cat`.
