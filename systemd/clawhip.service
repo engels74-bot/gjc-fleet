@@ -1,0 +1,19 @@
+[Unit]
+Description=clawhip daemon (event router -> Discord)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cvps
+WorkingDirectory=/home/cvps
+Environment=HOME=/home/cvps
+Environment=RUST_LOG=info
+Environment=CLAWHIP_CONFIG=/home/cvps/.clawhip/config.toml
+EnvironmentFile=/home/cvps/.clawhip/clawhip.env
+ExecStart=/home/cvps/.cargo/bin/clawhip start
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

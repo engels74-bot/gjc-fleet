@@ -1,0 +1,35 @@
+[Unit]
+Description=gjc-relay (clawhip -> Discord transform relay, loopback 127.0.0.1)
+Documentation=file:/home/cvps/.omc/plans/discord-unification-plan.md
+After=network-online.target
+Wants=network-online.target
+# Critical-path supervision: never give up restarting. A permanently-down relay
+# silently DLQ-buries every clawhip notification (clawhip does not retry transport
+# errors and its DLQ is a non-persistent in-memory Vec).
+StartLimitIntervalSec=0
+# Best-effort out-of-band alarm. NOTE: with Restart=always + StartLimitIntervalSec=0
+# the unit is restarted on every exit and can never reach the `failed` state, so this
+# rarely fires by design. The OPERATIVE alarm for real notification loss is
+# gjc-dlq-watch.service, which watches clawhip's journal for "clawhip dlq bury:" and
+# alerts direct-to-Discord (bypassing relay + clawhip). We keep infinite restart on
+# purpose — a finite start-limit would resurrect the "permanently down, silent loss" risk.
+OnFailure=gjc-relay-alert.service
+
+[Service]
+Type=simple
+User=cvps
+WorkingDirectory=/home/cvps/.gjc-relay
+Environment=HOME=/home/cvps
+EnvironmentFile=/home/cvps/.gjc-relay/relay.env
+ExecStart=/home/cvps/.gjc-relay/gjc-relay
+Restart=always
+RestartSec=1
+# Lightweight hardening (all read-compatible; relay only reads config + makes
+# outbound TLS, writes nothing to disk).
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
