@@ -1,6 +1,6 @@
 //! gjc-relay — loopback transform relay between clawhip and the Discord REST API.
 //!
-//! Behavior (see /home/cvps/.omc/plans/discord-unification-plan.md, Phase 1):
+//! Behavior (see docs/35-gjc-relay.md in the gjc-fleet repo):
 //!   * Transparent reverse proxy to https://discord.com (HOST ONLY): the incoming
 //!     request path is forwarded verbatim (it already carries /api/v10/...).
 //!   * GET /healthz is answered locally (liveness), never proxied.
@@ -24,8 +24,10 @@ const ALLOWED_KEYS: [&str; 6] = ["kind", "repo", "status", "actor", "branch", "u
 
 fn main() {
     let bind = std::env::var("RELAY_BIND").unwrap_or_else(|_| "127.0.0.1:25295".to_string());
-    let ds_path = std::env::var("RELAY_DESIGN_SYSTEM")
-        .unwrap_or_else(|_| "/home/cvps/.gjc-relay/design-system.json".to_string());
+    let ds_path = std::env::var("RELAY_DESIGN_SYSTEM").unwrap_or_else(|_| {
+        let home = std::env::var("HOME").expect("gjc-relay: neither RELAY_DESIGN_SYSTEM nor HOME is set");
+        format!("{home}/.gjc-relay/design-system.json")
+    });
 
     let ds_raw = std::fs::read_to_string(&ds_path)
         .unwrap_or_else(|e| panic!("gjc-relay: cannot read design system {ds_path}: {e}"));

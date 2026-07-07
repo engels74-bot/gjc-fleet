@@ -29,9 +29,9 @@ GH_OWNER="${GJC_BOT_GH_OWNER:-engels74}"
 LOCK="$STATE_DIR/gjc.lock"
 LOG="$STATE_DIR/gjc-run.log"
 
-GJC_REAL="${GJC_REAL_BIN:-/home/cvps/.bun/bin/gjc}"
+GJC_REAL="${GJC_REAL_BIN:-$HOME/.bun/bin/gjc}"
 GH="${GH_BIN:-/home/linuxbrew/.linuxbrew/bin/gh}"
-CLAWHIP="${CLAWHIP_BIN:-/home/cvps/.cargo/bin/clawhip}"
+CLAWHIP="${CLAWHIP_BIN:-$HOME/.cargo/bin/clawhip}"
 JANITOR="${JANITOR_BIN:-$SCRIPTS_DIR/maintenance/gjc-worktree-janitor.sh}"
 GIT="${GIT_BIN:-/usr/bin/git}"
 FLOCK="${FLOCK_BIN:-/usr/bin/flock}"
@@ -42,7 +42,7 @@ SELF="$(readlink -f "$0")"
 # gjc is a bun script (shebang runs `env bun`) and narration uses clawhip (cargo);
 # systemd service PATHs don't include ~/.bun/bin or ~/.cargo/bin (runbook "CRITICAL
 # PATH GOTCHA"). Own a complete PATH so the run works regardless of caller env.
-export PATH="/home/cvps/.bun/bin:/home/cvps/.cargo/bin:/home/cvps/.local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin${PATH:+:$PATH}"
+export PATH="$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin${PATH:+:$PATH}"
 
 mkdir -p "$STATE_DIR"; chmod 700 "$STATE_DIR" 2>/dev/null || true
 log() { printf '%s [gjc-run] %s\n' "$(date -Is)" "$*" >>"$LOG"; }

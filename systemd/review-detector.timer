@@ -1,6 +1,6 @@
 [Unit]
 Description=Run the review-detector every 5 minutes
-Documentation=file:/home/cvps/documentation/hermes-phase-g-plan.md
+Documentation=file:{{FLEET_REPO}}/docs/40-gjc-bot-automation.md
 
 [Timer]
 OnBootSec=5min

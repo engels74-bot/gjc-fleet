@@ -1,15 +1,13 @@
 [Unit]
 Description=gjc DLQ-bury watcher (out-of-band alert on clawhip silent notification loss)
-Documentation=file:/home/cvps/.omc/plans/discord-unification-plan.md
+Documentation=file:{{FLEET_REPO}}/docs/35-gjc-relay.md
 After=clawhip.service
 
 [Service]
 Type=simple
-User=cvps
-Environment=HOME=/home/cvps
-ExecStart=/home/cvps/.gjc-relay/dlq-watch.sh
+ExecStart=%h/.gjc-relay/dlq-watch.sh
 Restart=always
 RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

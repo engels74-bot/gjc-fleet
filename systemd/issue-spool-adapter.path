@@ -1,12 +1,12 @@
 [Unit]
 Description=Watch the clawhip issue spool and run the intake adapter
-Documentation=file:/home/cvps/documentation/hermes-phase-g-plan.md
+Documentation=file:{{FLEET_REPO}}/docs/40-gjc-bot-automation.md
 
 [Path]
 # clawhip's localfile sink appends github.issue-opened records here; each append
 # triggers the adapter. The adapter re-reads the whole spool and dedups via the
 # ledger, so a coalesced/missed trigger is self-correcting.
-PathModified=/home/cvps/.gjc-bot/issue-spool.jsonl
+PathModified=%h/.gjc-bot/issue-spool.jsonl
 Unit=issue-spool-adapter.service
 
 [Install]

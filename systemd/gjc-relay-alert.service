@@ -1,9 +1,7 @@
 [Unit]
 Description=gjc-relay out-of-band failure alarm (direct-to-Discord; bypasses clawhip + relay)
-Documentation=file:/home/cvps/.omc/plans/discord-unification-plan.md
+Documentation=file:{{FLEET_REPO}}/docs/35-gjc-relay.md
 
 [Service]
 Type=oneshot
-User=cvps
-Environment=HOME=/home/cvps
-ExecStart=/home/cvps/.gjc-relay/alert.sh
+ExecStart=%h/.gjc-relay/alert.sh

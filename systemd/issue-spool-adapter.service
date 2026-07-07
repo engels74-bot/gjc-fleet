@@ -1,13 +1,12 @@
 [Unit]
-Description=Process new clawhip issue-spool records -> Hermes issue-intake webhook
-Documentation=file:/home/cvps/documentation/hermes-phase-g-plan.md
+Description=Process new clawhip issue-spool records -> triage + gjc dispatch
+Documentation=file:{{FLEET_REPO}}/docs/40-gjc-bot-automation.md
 
 [Service]
 Type=oneshot
-User=cvps
-Environment=HOME=/home/cvps
 Environment=PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/cvps/github/engels74-bot/gjc-bot-scripts/intake/issue-spool-adapter.sh
+EnvironmentFile=-%h/.gjc-bot/gjc-bot.env
+ExecStart={{FLEET_REPO}}/pipeline/intake/issue-spool-adapter.sh
 Nice=10
 # The adapter fire-and-forgets a detached `gjc-run.sh _exec` (the long gjc run).
 # Default KillMode=control-group would reap that whole cgroup when this oneshot's

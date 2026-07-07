@@ -204,12 +204,15 @@ do_check() {
     GJC_BOT_SCRIPTS="$REPO_ROOT/pipeline" \
     bash "$REPO_ROOT/relay/runtime/check-kind-coverage.sh"
   grep -E '^[A-Za-z_]+=' "$OUT/relay.env" >/dev/null && echo "check: relay.env shape ok"
-  if git -C "$REPO_ROOT" grep -nE '[0-9]{15,}' -- ':!relay/Cargo.lock' >/dev/null 2>&1; then
+  # Discord-scale numeric IDs are banned repo-wide. The ONLY allowed shape is the
+  # zero-padded placeholder used by fleet.toml.example (000…00N) — a real ID pasted
+  # anywhere, example included, still fails.
+  if git -C "$REPO_ROOT" grep -nE '[0-9]{15,}' -- ':!relay/Cargo.lock' | grep -vE '0{14,}[0-9]' >/dev/null 2>&1; then
     echo "check: FAIL — numeric Discord-scale IDs found in repo:" >&2
-    git -C "$REPO_ROOT" grep -nE '[0-9]{15,}' -- ':!relay/Cargo.lock' >&2
+    git -C "$REPO_ROOT" grep -nE '[0-9]{15,}' -- ':!relay/Cargo.lock' | grep -vE '0{14,}[0-9]' >&2
     exit 1
   fi
-  echo "check: no numeric IDs in repo"
+  echo "check: no numeric IDs in repo (zero-padded example placeholders allowed)"
   echo "check: ALL OK"
 }
 

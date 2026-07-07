@@ -4,9 +4,9 @@
 # helper MUST have an entry in design-system.json — fail loudly here, not silently
 # grey at runtime.
 set -uo pipefail
-DS="${RELAY_DESIGN_SYSTEM:-/home/cvps/.gjc-relay/design-system.json}"
-CFG="${CLAWHIP_CONFIG:-/home/cvps/.clawhip/config.toml}"
-SCRIPTS_DIR="${GJC_BOT_SCRIPTS:-/home/cvps/github/engels74-bot/gjc-bot-scripts}"
+DS="${RELAY_DESIGN_SYSTEM:-$HOME/.gjc-relay/design-system.json}"
+CFG="${CLAWHIP_CONFIG:-$HOME/.clawhip/config.toml}"
+SCRIPTS_DIR="${GJC_BOT_SCRIPTS:-$HOME/github/engels74-bot/gjc-fleet/pipeline}"
 
 # Collect every RELAY kind actually emitted:
 #   * config route templates:            kind=<k>   (NOT the route `event=` names,

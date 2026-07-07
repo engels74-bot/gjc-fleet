@@ -18,7 +18,7 @@ TRIGGER_COMMENT: "augment review"
 MODEL_PRIMARY: "opus"
 MODEL_FAST: "sonnet"
 
-NOTIFY_CHANNEL: "1523097859988390008"   # Discord #gjc-events (embed via discord-embed.sh)
+NOTIFY_CHANNEL: "0"                     # filled by review-run.sh (from REVIEW_NOTIFY_CHANNEL)
 CI_CHECK_TIMEOUT: 600                   # seconds; entry CI gate only
 CI_POLL_INTERVAL: 15                    # seconds
 MAX_VERIFIER_RERUNS: 2
@@ -26,7 +26,8 @@ BUILD_RESPAWN_CAP: 1                    # decider re-spawns per cluster on build
 TIME_BUDGET_MIN: 90                     # outer `timeout` kills you at 90 min — pace yourself
 ```
 
-The `REPO`, `PR_ID`, `REVIEW_ID`, `CODING_GUIDELINES`, `MODEL_PRIMARY`, and `MODEL_FAST` keys are
+The `REPO`, `PR_ID`, `REVIEW_ID`, `CODING_GUIDELINES`, `MODEL_PRIMARY`, `MODEL_FAST`, and
+`NOTIFY_CHANNEL` keys are
 filled by `review-run.sh` at launch (sed on `^KEY: ` lines). The rest are constants.
 `TIME_BUDGET_MIN` mirrors the launcher's `REVIEW_RUN_TIMEOUT` default (5400 s) — if that env var
 is ever overridden, keep this in sync.

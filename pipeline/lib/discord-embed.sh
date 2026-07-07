@@ -23,7 +23,7 @@
 #     kind=custom (a template would replace the message) and do NOT let it resolve
 #     to `alert` format (which prepends an emoji and would break the leading prefix).
 
-_GJC_CLAWHIP="${CLAWHIP_BIN:-/home/cvps/.cargo/bin/clawhip}"
+_GJC_CLAWHIP="${CLAWHIP_BIN:-$HOME/.cargo/bin/clawhip}"
 
 # Keep only characters allowed in an envelope head slot; strips spaces and anything
 # that could break tokenisation (so a value is never able to corrupt the envelope).

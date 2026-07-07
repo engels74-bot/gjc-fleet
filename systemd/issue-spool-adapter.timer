@@ -1,6 +1,6 @@
 [Unit]
 Description=Backup retry for the issue-spool adapter (catches busy-requeued issues)
-Documentation=file:/home/cvps/documentation/hermes-phase-g-plan.md
+Documentation=file:{{FLEET_REPO}}/docs/40-gjc-bot-automation.md
 
 [Timer]
 OnBootSec=5min

@@ -12,14 +12,14 @@ set -uo pipefail
 # Discord IDs in git — the deployed copy in ~/.gjc-relay/ carries the
 # host-local default; here it must come from the environment.
 ALERT_CHANNEL="${GJC_ALERT_CHANNEL:-}"
-ENVFILE="/home/cvps/.clawhip/clawhip.env"
+ENVFILE="$HOME/.clawhip/clawhip.env"
 HOSTN="$(hostname 2>/dev/null || echo unknown)"
 WHEN="$(date '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || echo now)"
 
 logger -t gjc-relay-alert "gjc-relay entered failed state on ${HOSTN}; sending out-of-band alert" 2>/dev/null || true
 
 # Plain-ASCII, no double-quotes/backslashes/newlines -> safe to inline in JSON below.
-MSG="gjc-relay is DOWN (systemd failed state) on ${HOSTN} at ${WHEN}. clawhip notifications are being DLQ-buried (silent loss) until it recovers. Investigate: journalctl -u gjc-relay -n 80"
+MSG="gjc-relay is DOWN (systemd failed state) on ${HOSTN} at ${WHEN}. clawhip notifications are being DLQ-buried (silent loss) until it recovers. Investigate: journalctl --user -u gjc-relay -n 80"
 
 TOKEN=""
 if [ -r "$ENVFILE" ]; then

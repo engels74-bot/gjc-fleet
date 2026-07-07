@@ -1,8 +1,6 @@
 [Unit]
 Description=gjc-relay (clawhip -> Discord transform relay, loopback 127.0.0.1)
-Documentation=file:/home/cvps/.omc/plans/discord-unification-plan.md
-After=network-online.target
-Wants=network-online.target
+Documentation=file:{{FLEET_REPO}}/docs/35-gjc-relay.md
 # Critical-path supervision: never give up restarting. A permanently-down relay
 # silently DLQ-buries every clawhip notification (clawhip does not retry transport
 # errors and its DLQ is a non-persistent in-memory Vec).
@@ -17,19 +15,24 @@ OnFailure=gjc-relay-alert.service
 
 [Service]
 Type=simple
-User=cvps
-WorkingDirectory=/home/cvps/.gjc-relay
-Environment=HOME=/home/cvps
-EnvironmentFile=/home/cvps/.gjc-relay/relay.env
-ExecStart=/home/cvps/.gjc-relay/gjc-relay
+WorkingDirectory=%h/.gjc-relay
+EnvironmentFile=%h/.gjc-relay/relay.env
+ExecStart=%h/.gjc-relay/gjc-relay
 Restart=always
 RestartSec=1
-# Lightweight hardening (all read-compatible; relay only reads config + makes
-# outbound TLS, writes nothing to disk).
+# Lightweight hardening (relay only reads config + makes outbound TLS, writes
+# nothing to disk). Namespace-based sandboxing (ProtectSystem/ProtectHome/
+# PrivateTmp) is deliberately ABSENT: in a user manager those need unprivileged
+# user namespaces, which Ubuntu >= 24.04 restricts via AppArmor
+# (kernel.apparmor_restrict_unprivileged_userns=1) — a hard start failure on the
+# fleet's single point of failure is worse than the lost sandbox. The directives
+# below are all honored without namespaces.
 NoNewPrivileges=true
-ProtectSystem=full
-ProtectHome=read-only
-PrivateTmp=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+RestrictNamespaces=true
+MemoryDenyWriteExecute=true
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

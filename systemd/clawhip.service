@@ -1,19 +1,17 @@
 [Unit]
 Description=clawhip daemon (event router -> Discord)
-After=network-online.target
-Wants=network-online.target
+# User-scope unit: no network-online.target exists in the user manager; the
+# daemon's Restart loop self-heals pre-network starts (RestartSec=5).
 
 [Service]
 Type=simple
-User=cvps
-WorkingDirectory=/home/cvps
-Environment=HOME=/home/cvps
+WorkingDirectory=%h
 Environment=RUST_LOG=info
-Environment=CLAWHIP_CONFIG=/home/cvps/.clawhip/config.toml
-EnvironmentFile=/home/cvps/.clawhip/clawhip.env
-ExecStart=/home/cvps/.cargo/bin/clawhip start
+Environment=CLAWHIP_CONFIG=%h/.clawhip/config.toml
+EnvironmentFile=%h/.clawhip/clawhip.env
+ExecStart=%h/.cargo/bin/clawhip start
 Restart=always
 RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

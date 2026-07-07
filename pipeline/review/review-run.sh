@@ -20,8 +20,8 @@ REVIEW_LOCK="$STATE_DIR/review.lock"
 LOG="$STATE_DIR/review.log"
 TEMPLATE="${HANDLER_TEMPLATE:-$SCRIPTS_DIR/review/ai-code-review-handler-original.md}"
 
-CLAUDE="${CLAUDE_BIN:-/home/cvps/.local/bin/claude}"
-CLAWHIP="${CLAWHIP_BIN:-/home/cvps/.cargo/bin/clawhip}"
+CLAUDE="${CLAUDE_BIN:-$HOME/.local/bin/claude}"
+CLAWHIP="${CLAWHIP_BIN:-$HOME/.cargo/bin/clawhip}"
 GIT="${GIT_BIN:-/usr/bin/git}"
 FLOCK="${FLOCK_BIN:-/usr/bin/flock}"
 TIMEOUT="${TIMEOUT_BIN:-/usr/bin/timeout}"
@@ -29,11 +29,11 @@ MODEL_PRIMARY="${REVIEW_MODEL_PRIMARY:-opus}"
 MODEL_FAST="${REVIEW_MODEL_FAST:-sonnet}"
 GUIDELINES="${REVIEW_GUIDELINES:-AGENTS.md}"
 # shellcheck disable=SC2034  # documented config knob; not consumed in this script
-NOTIFY_CHANNEL="${REVIEW_NOTIFY_CHANNEL:-1523097859988390008}"   # #gjc-events
+NOTIFY_CHANNEL="${REVIEW_NOTIFY_CHANNEL:?set in ~/.gjc-bot/gjc-bot.env (rendered from fleet.toml) — numeric Discord IDs never ship in-repo}"
 RUN_TIMEOUT="${REVIEW_RUN_TIMEOUT:-5400}"                        # 90 min hard cap
 SELF="$(readlink -f "$0")"
 # gjc/claude/clawhip live outside the systemd PATH — own a complete one.
-export PATH="/home/cvps/.bun/bin:/home/cvps/.cargo/bin:/home/cvps/.local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin${PATH:+:$PATH}"
+export PATH="$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin${PATH:+:$PATH}"
 
 mkdir -p "$STATE_DIR"; chmod 700 "$STATE_DIR" 2>/dev/null || true
 log() { printf '%s [review-run] %s\n' "$(date -Is)" "$*" >>"$LOG"; }
@@ -85,6 +85,7 @@ launcher() {
       -e "s|^CODING_GUIDELINES: .*|CODING_GUIDELINES: \"$GUIDELINES\"|" \
       -e "s|^MODEL_PRIMARY: .*|MODEL_PRIMARY: \"$MODEL_PRIMARY\"|" \
       -e "s|^MODEL_FAST: .*|MODEL_FAST: \"$MODEL_FAST\"|" \
+      -e "s|^NOTIFY_CHANNEL: .*|NOTIFY_CHANNEL: \"$NOTIFY_CHANNEL\"|" \
       "$TEMPLATE" > "$filled"
   log "launching handler: $repo#$pr review=$rid dir=$dir prompt=$filled"
   setsid "$SELF" _handler "$repo" "$pr" "$dir" "$filled" </dev/null >>"$LOG" 2>&1 &

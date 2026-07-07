@@ -29,9 +29,9 @@ GH="${GH_BIN:-/home/linuxbrew/.linuxbrew/bin/gh}"
 JQ="${JQ_BIN:-/home/linuxbrew/.linuxbrew/bin/jq}"
 CURL="${CURL_BIN:-/usr/bin/curl}"
 # shellcheck disable=SC2034  # config parity; lib/discord-embed.sh resolves its own clawhip
-CLAWHIP="${CLAWHIP_BIN:-/home/cvps/.cargo/bin/clawhip}"
+CLAWHIP="${CLAWHIP_BIN:-$HOME/.cargo/bin/clawhip}"
 GJC_RUN="${GJC_RUN_BIN:-$SCRIPTS_DIR/run/gjc-run.sh}"
-NOTIFY_CHANNEL="${ISSUE_NOTIFY_CHANNEL:-1523097859988390008}"   # #gjc-events
+NOTIFY_CHANNEL="${ISSUE_NOTIFY_CHANNEL:?set in ~/.gjc-bot/gjc-bot.env (rendered from fleet.toml) — numeric Discord IDs never ship in-repo}"
 BRAIN_MODEL="${BRAIN_MODEL:-minimax/minimax-m3}"
 NANOGPT_URL="${NANOGPT_URL:-https://nano-gpt.com/api/v1/chat/completions}"
 

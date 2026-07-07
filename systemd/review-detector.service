@@ -1,13 +1,12 @@
 [Unit]
 Description=Poll bot PRs for augmentcode[bot] reviews-with-suggestions -> launch AI Code Review Handler
-Documentation=file:/home/cvps/documentation/hermes-phase-g-plan.md
+Documentation=file:{{FLEET_REPO}}/docs/40-gjc-bot-automation.md
 
 [Service]
 Type=oneshot
-User=cvps
-Environment=HOME=/home/cvps
 Environment=PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/cvps/github/engels74-bot/gjc-bot-scripts/review/review-detector.sh
+EnvironmentFile=-%h/.gjc-bot/gjc-bot.env
+ExecStart={{FLEET_REPO}}/pipeline/review/review-detector.sh
 Nice=10
 # The detector fire-and-forgets a detached handler run (review-run.sh -> setsid).
 # KillMode=process keeps that run alive after this oneshot's main process exits

@@ -1,15 +1,13 @@
 [Unit]
 Description=gjc worktree janitor (crash-net for orphaned launch worktrees)
-Documentation=file:/home/cvps/documentation/hermes-phase-g-plan.md
-After=network.target
+Documentation=file:{{FLEET_REPO}}/docs/40-gjc-bot-automation.md
 
 [Service]
 Type=oneshot
-User=cvps
-Environment=HOME=/home/cvps
 # linuxbrew is where tmux lives on this host; keep it on PATH for the occupancy
 # supplement. (Occupancy is primarily a PATH-independent /proc cwd scan anyway.)
 Environment=PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=-%h/.gjc-bot/gjc-bot.env
 # Deliberately NO PrivateTmp — the janitor must see the user tmux socket in /tmp.
-ExecStart=/home/cvps/github/engels74-bot/gjc-bot-scripts/maintenance/gjc-worktree-janitor.sh
+ExecStart={{FLEET_REPO}}/pipeline/maintenance/gjc-worktree-janitor.sh
 Nice=10

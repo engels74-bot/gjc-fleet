@@ -49,4 +49,4 @@ sudo systemctl restart gjc-relay.service
 The relay is **in-path for every fleet Discord notification** (clawhip DLQ-buries on
 transport failure, with no retry), so keep the restart window short and check
 `journalctl -u gjc-relay -n 20` plus `gjc-dlq-watch.service` afterwards. The systemd
-unit (`ExecStart=/home/cvps/.gjc-relay/gjc-relay`) needs no change on redeploy.
+unit (`ExecStart=%h/.gjc-relay/gjc-relay`) needs no change on redeploy.

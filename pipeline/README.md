@@ -40,7 +40,7 @@ hooks enforce this.
 ## Deployment
 
 The `systemd/` units reference the scripts by absolute path under
-`/home/cvps/github/engels74-bot/gjc-bot-scripts/` (e.g.
+`$HOME/github/engels74-bot/gjc-bot-scripts/` (e.g.
 `review/merge-gate.sh`). Install the units into `/etc/systemd/system/`, then
 `sudo systemctl daemon-reload` and enable the relevant timers/paths. If you
 relocate the checkout, update the `ExecStart=` lines to match (the scripts

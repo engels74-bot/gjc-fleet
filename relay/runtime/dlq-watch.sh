@@ -10,7 +10,7 @@ set -uo pipefail
 # Discord IDs in git — the deployed copy in ~/.gjc-relay/ carries the
 # host-local default; here it must come from the environment.
 ALERT_CHANNEL="${GJC_ALERT_CHANNEL:-}"
-ENVFILE="/home/cvps/.clawhip/clawhip.env"
+ENVFILE="$HOME/.clawhip/clawhip.env"
 COOLDOWN="${GJC_DLQ_COOLDOWN:-300}"
 last=0
 
@@ -27,13 +27,13 @@ notify() {
 }
 
 # -n0: start at the tail (do not replay history). -o cat: message text only.
-journalctl -u clawhip.service -f -n0 -o cat 2>/dev/null | while IFS= read -r line; do
+journalctl --user -u clawhip.service -f -n0 -o cat 2>/dev/null | while IFS= read -r line; do
   case "$line" in
     *"clawhip dlq bury:"*)
       now="${EPOCHSECONDS:-$(date +%s)}"
       if [ $((now - last)) -ge "$COOLDOWN" ]; then
         last="$now"
-        notify "clawhip DLQ-buried a notification (silent, permanent loss). The gjc-relay delivery path likely failed on $(hostname). Check: systemctl status gjc-relay ; journalctl -u clawhip -n 80"
+        notify "clawhip DLQ-buried a notification (silent, permanent loss). The gjc-relay delivery path likely failed on $(hostname). Check: systemctl --user status gjc-relay ; journalctl --user -u clawhip -n 80"
       fi
       ;;
   esac
