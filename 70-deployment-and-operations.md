@@ -23,13 +23,16 @@ Everything runs **natively on this host as user `cvps`** (no Docker), managed by
 systemd units** (not user units — `systemctl --user` has no fleet units; there is no crontab).
 Rationale: sharing the host filesystem, tmux, git credentials, and Codex OAuth.
 
-**Source vs. runtime (a common misread).** The three upstream engines live as source checkouts
-under `~/github/engels74/gjc/` (`gajae-code`, `hermes-agent`, `clawhip` — upstream remotes, not the
-user's own repos), but the services run from *built/installed* locations, not those checkouts:
-`gjc` from `~/.bun/bin/gjc`, hermes from `~/.hermes/hermes-agent/venv/bin/python`, clawhip from
-`~/.cargo/bin/clawhip`, and the locally-authored relay from `~/.gjc-relay/gjc-relay`. The `ExecStart=`
-paths in the Service map below are the authoritative runtime locations. See
-[00-overview.md](00-overview.md#where-each-component-lives-and-runs) for the full split.
+**Source vs. runtime (a common misread).** The three upstream engines live as *reference-only*
+source checkouts under `~/github/engels74/gjc/` (`gajae-code`, `hermes-agent`, `clawhip` — upstream
+remotes, not the user's own repos). The services do not run from those checkouts, and the checkouts
+are not the build input: each app is installed independently — `gjc` as a bun global package
+(runs from `~/.bun/bin/gjc`), clawhip via `cargo install` from crates.io (`~/.cargo/bin/clawhip`),
+hermes as a separate deployed copy + editable venv under `~/.hermes/hermes-agent`
+(`~/.hermes/hermes-agent/venv/bin/python`). Only the locally-authored relay is built in place
+(`~/.gjc-relay/src` → `~/.gjc-relay/gjc-relay`). The base toolchain is linuxbrew; the fleet apps are
+not brew formulae. The `ExecStart=` paths in the Service map below are the authoritative runtime
+locations. See [00-overview.md](00-overview.md#where-each-component-lives-and-runs) for the full split.
 
 ## Service map
 
@@ -151,3 +154,7 @@ teardown. Config waves additionally leave dated `.bak-*` files next to each edit
   runtime" note under "Where things run" reinforcing the repo split — upstream checkouts in
   `~/github/engels74/gjc/` vs the built/installed runtime locations the `ExecStart=` paths point at;
   verified live via `systemctl cat`.
+- 2026-07-07 (install-provenance refinement) — Sharpened the "Source vs. runtime" note: checkouts
+  are reference-only (not the build input); each app installs via its own channel (bun global,
+  `cargo install` from crates.io, hermes deployed-copy venv), only gjc-relay is built in place, and
+  the fleet apps are not brew formulae.

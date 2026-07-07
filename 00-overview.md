@@ -40,25 +40,29 @@ areas, and a build/install step in between:
 - **`~/github/engels74-bot/` — the user's OWN `gjc-*` projects**: `gjc-bot-scripts` (the repo-bot
   shell glue), `gjc-server-tool` (the `stackman` ops console), and `gjc-architecture` (this doc
   set). These commit as the `engels74-bot` identity.
-- **`~/github/engels74/gjc/` — three UPSTREAM third-party engines**, cloned and built locally (they
-  are *not* under `engels74-bot`, and *not* the user's own repos): `gajae-code`
-  (remote `Yeachan-Heo/gajae-code`), `hermes-agent` (remote `nousresearch/hermes-agent`), and
-  `clawhip` (remote `Yeachan-Heo/clawhip`).
+- **`~/github/engels74/gjc/` — three UPSTREAM third-party engines**, cloned as *reference source
+  only* (they are *not* under `engels74-bot`, *not* the user's own repos, and *not* where the apps
+  run from): `gajae-code` (remote `Yeachan-Heo/gajae-code`), `hermes-agent`
+  (remote `nousresearch/hermes-agent`), and `clawhip` (remote `Yeachan-Heo/clawhip`).
 
-The services do **not** run from those upstream source checkouts. Source is built/installed into a
-separate runtime location, and the units run from there:
+The services do **not** run from those upstream checkouts, nor are the checkouts the build input.
+Each app is installed independently through its own package manager (or, for hermes, a separate
+deployed copy), and the units run from there:
 
-| Component | Source checkout | Runs from (installed/built) |
-|---|---|---|
-| gajae-code (`gjc`) | `~/github/engels74/gjc/gajae-code` | `~/.bun/bin/gjc` (installed bun binary) |
-| hermes-agent | `~/github/engels74/gjc/hermes-agent` | `~/.hermes/hermes-agent/venv/bin/python` (WorkingDirectory `~/.hermes`) |
-| clawhip | `~/github/engels74/gjc/clawhip` | `~/.cargo/bin/clawhip` (installed cargo binary) |
-| gjc-relay | `~/.gjc-relay/src` (locally authored) | `~/.gjc-relay/gjc-relay` (built binary) |
+| Component | Reference checkout | Installed via | Runs from |
+|---|---|---|---|
+| gajae-code (`gjc`) | `~/github/engels74/gjc/gajae-code` | bun global package (`gajae-code`, v0.9.0) | `~/.bun/bin/gjc` |
+| hermes-agent | `~/github/engels74/gjc/hermes-agent` | separate deployed copy + editable venv under `~/.hermes/hermes-agent` (v0.18.0) | `~/.hermes/hermes-agent/venv/bin/python` (WorkingDirectory `~/.hermes`) |
+| clawhip | `~/github/engels74/gjc/clawhip` | `cargo install` from crates.io (v0.6.11) | `~/.cargo/bin/clawhip` |
+| gjc-relay | `~/.gjc-relay/src` (locally authored) | `cargo build` in place | `~/.gjc-relay/gjc-relay` |
 
-Pattern: **upstream source in `~/github/engels74/gjc/` → built/installed into `~/.bun/bin` /
-`~/.hermes` / `~/.cargo/bin` (and the locally-authored relay into `~/.gjc-relay`) → the services
-run from there.** The `~/.gjc`, `~/.hermes`, `~/.clawhip` dirs in the table above are config/state
-homes, not the source trees.
+Pattern: the checkouts under `~/github/engels74/gjc/` are **reference source only** — read/diff
+them, but the running apps are installed independently via package managers (`cargo install` from
+crates.io, bun global) or a separate deployed copy (hermes), and updates arrive through those
+channels, not by rebuilding the checkout. Only the locally-authored **gjc-relay** is built directly
+from its own tree (`~/.gjc-relay/src`). The base toolchain (`gh`, `jq`, `tmux`, `python`) comes from
+linuxbrew; the fleet apps themselves are not brew formulae. The `~/.gjc`, `~/.hermes`, `~/.clawhip`
+dirs are config/state homes, not source trees.
 
 ## Topology
 
@@ -158,3 +162,9 @@ subscription (`gpt-5.5`). Timeline & staleness:
   (`engels74-bot/gjc-*` = own projects vs upstream `engels74/gjc/*` engines) and the
   source→built/installed→service-runs-from-there pattern; verified live against `git remote` and
   `systemctl cat`.
+- 2026-07-07 (install-provenance refinement) — Corrected the "lives and runs" subsection: the
+  `engels74/gjc/` checkouts are **reference source only**, not the build input. Documented the real
+  per-app install channel (verified via `~/.cargo/.crates2.json`, bun global node_modules, the venv
+  `__editable__` marker): clawhip = `cargo install` from crates.io (v0.6.11), gjc = bun global
+  package (v0.9.0), hermes = separate deployed copy + editable venv under `~/.hermes` (v0.18.0),
+  gjc-relay = built in place. Noted the fleet apps are not brew formulae (linuxbrew = base toolchain).
