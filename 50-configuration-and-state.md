@@ -18,9 +18,9 @@ maintainer_notes: >
 
 | Secret (env var name) | Lives in | Used by |
 |---|---|---|
-| NanoGPT API key (`NANOGPT_API_KEY`) | `~/.hermes/.env` | repo-bot triage + merge-gate LLM calls, weekly issue-triage cron; kept as hermes revert/fallback provider (the brain switched to Codex 2026-07-07) |
+| NanoGPT API key (`NANOGPT_API_KEY`) | `~/.hermes/.env` | gjc-bot triage + merge-gate LLM calls, weekly issue-triage cron; kept as hermes revert/fallback provider (the brain switched to Codex 2026-07-07) |
 | Codex/Copilot credential pool (OAuth + fingerprinted API keys, no env var) | `~/.hermes/auth.json` | hermes brain model (`active_provider: openai-codex`, `gpt-5.5`) since 2026-07-07 |
-| Bot GitHub PAT (`GITHUB_TOKEN` → exported as `GH_TOKEN`) | `~/.hermes/.env` | hermes, all repo-bot `gh` calls |
+| Bot GitHub PAT (`GITHUB_TOKEN` → exported as `GH_TOKEN`) | `~/.hermes/.env` | hermes, all gjc-bot `gh` calls |
 | Hermes Discord bot token (`DISCORD_BOT_TOKEN`) + `DISCORD_HOME_CHANNEL` | `~/.hermes/.env` | hermes gateway ("GJC Brain" identity) |
 | clawhip GitHub token (`CLAWHIP_GITHUB_TOKEN`) | `~/.clawhip/clawhip.env` | clawhip GitHub monitors |
 | clawhip Discord bot token (`CLAWHIP_DISCORD_BOT_TOKEN`) | `~/.clawhip/clawhip.env` | clawhip sends ("GJC Clawhip" identity); also read directly by `dlq-watch.sh`/`alert.sh` for out-of-band alarms |
@@ -28,7 +28,7 @@ maintainer_notes: >
 | `EXA_API_KEY` | gjc env/config | gjc's `exa` MCP server |
 | Per-session notification tokens | `<repo>/.gjc/state/notifications/<sessionId>.json` | gjc notifications SDK clients |
 
-Notable custody pattern: **`~/.hermes/.env` is the de-facto shared secret store** — repo-bot
+Notable custody pattern: **`~/.hermes/.env` is the de-facto shared secret store** — gjc-bot
 scripts grep `GITHUB_TOKEN`/`NANOGPT_API_KEY` out of it at runtime rather than having their own
 env file. `~/.gjc-relay/relay.env` deliberately holds **no** token (the bot token transits
 per-request in the `Authorization` header).
@@ -69,7 +69,10 @@ caches.
 `relay.env`, `dlq-watch.sh`, `alert.sh`, `check-kind-coverage.sh`, `.omc/`. `src/main.rs` also
 carries a `.bak-embedbatch-20260707-015213` from the batch-splitting wave.
 
-### `~/.repo-bot` (repo-bot state) — detail in [40-repo-bot-automation.md](40-repo-bot-automation.md#env--config-surface)
+### `~/.repo-bot` (gjc-bot state) — detail in [40-gjc-bot-automation.md](40-gjc-bot-automation.md#env--config-surface)
+
+The dir name (and the `REPO_BOT_*` env prefix) keeps the component's historical "repo-bot"
+working name; the component itself is called **gjc-bot** throughout this doc set.
 
 | File | Purpose |
 |---|---|
@@ -100,12 +103,17 @@ Three distinct worktree families — do not conflate:
 
 | Family | Location | Created by | Cleaned by |
 |---|---|---|---|
-| Automated run worktrees | `~/github/engels74-bot/<repo>.gajae-code-worktrees/run-<stamp>-<pid>/` | `gjc-run.sh launch` | `gjc-run.sh _exec` (normal), janitor (crash-net) |
+| Automated run worktrees | `~/github/engels74-bot/fleet/<repo>.gajae-code-worktrees/run-<stamp>-<pid>/` | `gjc-run.sh launch` | `gjc-run.sh _exec` (normal), janitor (crash-net) |
 | gjc interactive/coordinator worktrees | `<repo>.gajae-code-worktrees/main-<hash>/` (detached HEAD) | gjc itself (`--worktree` / coordinator) | left for reuse; janitor explicitly skips |
 | hermes kanban worktrees | `<repo>/.worktrees/<task-id>/` (branch `wt/<task-id>`) | `kanban_db.py:_ensure_git_worktree` | kanban lifecycle (none live observed) |
 
-Plus the isolated review checkout `~/github/engels74-bot/review/<repo>` (a full clone, not a
+Plus the isolated review checkout `~/github/engels74-bot/fleet/review/<repo>` (a full clone, not a
 worktree — own `.git`, so the review lane never contends with the run lane).
+
+All of the above live under `~/github/engels74-bot/fleet/` — the **fleet clone root** holding
+every pipeline-owned working copy (the six app clones, their worktree buckets, `review/`) since
+the 2026-07-07 fleet/ move; the root of `~/github/engels74-bot/` holds only the bot's own
+`gjc-*` project repos.
 
 ## systemd units (source vs installed)
 
@@ -144,7 +152,7 @@ snapshot tooling — the relocated scripts carry no `.bak-*` files (they are git
 
 - 2026-07-06 — Initial draft (consolidated from all component research).
 - 2026-07-07 — Verification pass: inventory synced to the 2026-07-06/07 waves — hermes brain
-  switched to the Codex OAuth pool (`auth.json` row added; NanoGPT custody rescoped to repo-bot);
+  switched to the Codex OAuth pool (`auth.json` row added; NanoGPT custody rescoped to gjc-bot);
   hermes inline backups added (`.bak-yolo`, `.env.bak-workdir`, `SOUL.md.bak-workspace`) plus
   `logs/` and `.gjc/`; clawhip backup count 3→4 (`embedbatch`); relay `design-system.json`/`main.rs`
   embedbatch backups; gjc `credential-auto-import-state.json`. `~/.repo-bot` inventory re-verified
@@ -161,3 +169,6 @@ snapshot tooling — the relocated scripts carry no `.bak-*` files (they are git
 - 2026-07-07 (runbook-retirement pass) — Reframed the two references to the earlier hermes-stack
   build-log/runbook (backup-registration claims) to past tense; that build-log has been deleted and
   this doc set is the single source of truth.
+- 2026-07-07 (fleet/ move + component rename) — Component consistently named **gjc-bot**
+  (`~/.repo-bot` and `REPO_BOT_*` flagged as historical naming). Worktree-family and
+  review-checkout paths updated to the new `~/github/engels74-bot/fleet/` clone root.

@@ -27,7 +27,7 @@ hits, and agent-lifecycle events into Discord channels **without running a Disco
 session** — events in one side (CLI/HTTP/monitors), rendered messages out the other (Discord REST).
 
 In this deployment clawhip is the **notification bus** of the whole fleet: it polls GitHub for six
-repos, receives lifecycle events from the repo-bot scripts, writes the issue spool that feeds the
+repos, receives lifecycle events from the gjc-bot scripts, writes the issue spool that feeds the
 automated pipeline, and posts everything to Discord as the "GJC Clawhip" bot identity.
 
 **Version note:** the shipped `ARCHITECTURE.md:1` describes v0.4.0, but `Cargo.toml:3` is
@@ -121,7 +121,7 @@ local_path = "/home/cvps/.repo-bot/issue-spool.jsonl"  format = "compact"
 with whitelisted fields (`summarize_payload`, `local_file.rs:38-56`) and UTF-8-safe truncation.
 `format=compact` is deliberate so `<repo>#<number> opened: <title>` leads the content and survives
 truncation for the downstream parser (`issue-spool-adapter.sh` — see
-[40-repo-bot-automation.md](40-repo-bot-automation.md#issue-spool-adaptersh)).
+[40-gjc-bot-automation.md](40-gjc-bot-automation.md#issue-spool-adaptersh)).
 
 **Consumer side, verified live:** the spool path `/home/cvps/.repo-bot/issue-spool.jsonl` is watched
 by a systemd **path unit**, `issue-spool-adapter.path` (`PathModified=`, `Unit=issue-spool-adapter.service`,
@@ -162,7 +162,7 @@ record the 2026-07-06/07 reconfiguration waves (`phaseg` → `g7` → `discord` 
 - `[monitors]` — `poll_interval_secs=60`, `github_api_base`; `[monitors.tmux] sessions=[]` (tmux
   watching currently off).
 - `[[monitors.git.repos]]` × 6 — one block per monitored repo (`mover-status`, `easyhdr`,
-  `obzorarr`, `otpravkarr`, `perevoditarr`, `zondarr`, all under `~/github/engels74-bot/`), each
+  `obzorarr`, `otpravkarr`, `perevoditarr`, `zondarr`, all under `~/github/engels74-bot/fleet/`), each
   with `emit_issue_opened=true`, `emit_pr_status=true`, commits/branch-changes off, and a dedicated
   per-repo Discord channel.
 
@@ -181,7 +181,7 @@ documentation.
 
 **Inbound (event producers):**
 - Its own git/GitHub monitor sources (the 6 repos).
-- repo-bot scripts: `gjc-run.sh`/`review-run.sh` (`clawhip agent <state>` narration),
+- gjc-bot scripts: `gjc-run.sh`/`review-run.sh` (`clawhip agent <state>` narration),
   `issue-spool-adapter.sh`/`merge-gate.sh` (via `lib/discord-embed.sh` → `clawhip send`).
 - In-repo `integrations/` git/tmux hooks and `plugins/{claude-code,codex}/bridge.sh` (available,
   not centrally configured here).
@@ -189,7 +189,7 @@ documentation.
 **Outbound:**
 - Discord REST (bot token) — all channel sends routed through **gjc-relay** on loopback :25295,
   which turns `GJCEMBED1 …` envelopes into rich embeds ([35-gjc-relay.md](35-gjc-relay.md)).
-- The localfile issue spool → repo-bot's intake ([40-repo-bot-automation.md](40-repo-bot-automation.md)).
+- The localfile issue spool → gjc-bot's intake ([40-gjc-bot-automation.md](40-gjc-bot-automation.md)).
 
 **Non-connections worth stating:**
 - **hermes and clawhip are siblings**, not a pipeline: hermes' chat replies go out via its own bot
@@ -212,9 +212,9 @@ so the relay is up before clawhip sends. Note the in-repo `deploy/clawhip.servic
 - Is any `slack` sink route live anywhere? (Code exists; live config shows none.)
 - Are the in-repo `integrations/` git/tmux hooks installed in any repo on this machine? (The tmux
   monitor list is empty and `gjc-reap.sh`'s claimed `tmux.stale` trigger route doesn't exist — see
-  [40-repo-bot-automation.md](40-repo-bot-automation.md#discrepancies).)
+  [40-gjc-bot-automation.md](40-gjc-bot-automation.md#discrepancies).)
 - Will the `gajae` handler seam be wired up (route action → exec gjc), or does invocation stay with
-  repo-bot?
+  gjc-bot?
 - Upstream `ARCHITECTURE.md` is two minor versions stale — worth an upstream refresh or a local
   addendum.
 
@@ -242,3 +242,6 @@ so the relay is up before clawhip sends. Note the in-repo `deploy/clawhip.servic
   drop-in) — matches. No numeric Discord IDs added; route channel targets are named only
   (cross-checked against `~/.hermes/channel_directory.json` and `config.toml`'s own channel IDs,
   which are not reproduced here).
+- 2026-07-07 (fleet/ move + component rename) — repo-bot → **gjc-bot** terminology; the six
+  `[[monitors.git.repos]] path` entries now point at `~/github/engels74-bot/fleet/<repo>`
+  (config backed up as `.bak-fleetmove-*`, daemon restarted, polling re-verified live).

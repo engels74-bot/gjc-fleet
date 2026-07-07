@@ -41,7 +41,7 @@ enforcement gates exist in CI (`scripts/rebrand-inventory.ts`, `scripts/verify-g
 **robogjc** is a *separate deliverable inside this repo* (`python/robogjc/`, `Dockerfile.robogjc`):
 a self-hosted GitHub triage-and-fix bot that drives `gjc --mode rpc` as a subprocess against
 per-issue worktrees (`python/robogjc/README.md:1-30`). **robogjc is not deployed on this machine** —
-the live issue→PR lane is the shell pipeline in [40-repo-bot-automation.md](40-repo-bot-automation.md),
+the live issue→PR lane is the shell pipeline in [40-gjc-bot-automation.md](40-gjc-bot-automation.md),
 which calls `gjc -p` directly. See the glossary entry in
 [90-glossary-and-open-questions.md](90-glossary-and-open-questions.md).
 
@@ -193,7 +193,7 @@ Live contents on this machine:
 | `~/.gjc/agent/agent.db` (+wal/shm) | SQLite: `auth_credentials`, `cache`, `model_usage`, `settings` (auth material lives here — not inspected) |
 | `~/.gjc/agent/history.db` | Prompt/command history with FTS5 |
 | `~/.gjc/agent/models.db` | Remote model discovery cache |
-| `~/.gjc/agent/sessions/` | One dir per workspace, keyed by absolute workspace path (slashes→dashes), each holding timestamped `<ISO>_<uuid>.jsonl` transcripts + `resident-cache/`. Live entries include repo-bot run worktrees (e.g. `-github-engels74-bot-mover-status.gajae-code-worktrees-run-…`) |
+| `~/.gjc/agent/sessions/` | One dir per workspace, keyed by absolute workspace path (slashes→dashes), each holding timestamped `<ISO>_<uuid>.jsonl` transcripts + `resident-cache/`. Live entries include gjc-bot run worktrees (e.g. `-github-engels74-bot-fleet-mover-status.gajae-code-worktrees-run-…`; entries from before the 2026-07-07 fleet/ move keep the old un-nested key) |
 | `~/.gjc/agent/terminal-sessions/` | Per-terminal state (`pts-2`, `tmux-%0`, …) for `--tmux` pane ownership |
 | `~/.gjc/logs/` | Daily JSONL logs (`gjc.YYYY-MM-DD.log`) + a hidden audit file hashing rotated logs |
 | `~/.gjc/gpu_cache.json` | Cached GPU identity string, used for image/render-protocol decisions > [inferred] — no direct source reference located |
@@ -208,13 +208,13 @@ Per-repo state also exists under each workspace's `.gjc/` dir (git-ignored), e.g
 - **hermes → gjc:** the hermes gateway registers gjc's **Coordinator MCP** as `gjc_coordinator`
   (`~/.hermes/config.yaml`); the coordinator runs as a child process of `hermes-gateway.service`.
   This is the interactive "GJC Brain drives gjc" lane.
-- **repo-bot → gjc:** the automated issue→PR lane runs `timeout 1800 gjc -p --no-pty "@<promptfile>"`
+- **gjc-bot → gjc:** the automated issue→PR lane runs `timeout 1800 gjc -p --no-pty "@<promptfile>"`
   inside a unique per-run worktree
   (`~/github/engels74-bot/gjc-bot-scripts/run/gjc-run.sh:130`). See
-  [40-repo-bot-automation.md](40-repo-bot-automation.md).
+  [40-gjc-bot-automation.md](40-gjc-bot-automation.md).
 - **gjc → GitHub:** in the automated lane, gjc itself commits, pushes, and opens the PR as
   `engels74-bot` (per the generated prompt file written in `gjc-run.sh:103-110`).
-- **gjc → Discord:** none directly. Its visible activity is narrated by repo-bot scripts through
+- **gjc → Discord:** none directly. Its visible activity is narrated by gjc-bot scripts through
   clawhip → gjc-relay (see [35-gjc-relay.md](35-gjc-relay.md)).
 - **clawhip → gjc:** clawhip has a first-class "gajae handler" seam (`clawhip/src/daemon.rs:637,714-745`,
   `src/gajae.rs`) that can exec the gjc binary to handle an event — **not configured live**
@@ -255,3 +255,6 @@ Per-repo state also exists under each workspace's `.gjc/` dir (git-ignored), e.g
   still matches a live entry under `~/.gjc/agent/sessions/` — no change needed. AGENTS.md's
   four-skills/four-subagents claim (`AGENTS.md:7-24`) and the run-mode/flag tables re-verified
   against current source — no drift found there.
+- 2026-07-07 (fleet/ move + component rename) — repo-bot → **gjc-bot** terminology; the
+  sessions-table workspace-key example updated to the new `~/github/engels74-bot/fleet/` clone
+  root (entries from before the move keep the old un-nested key).

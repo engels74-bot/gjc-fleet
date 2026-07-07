@@ -12,7 +12,7 @@ maintainer_notes: >
 
 ## What this system is
 
-An **autonomous GitHub repo-bot fleet** running natively on this host (user `cvps`): GitHub issues
+An **autonomous GitHub gjc-bot fleet** running natively on this host (user `cvps`): GitHub issues
 on six personal repos are triaged by a cheap LLM, fixed by a coding agent in isolated git
 worktrees, reviewed, and advisory-gated for a human merge — with every step narrated to Discord as
 rich embeds, and a conversational Discord "brain" available to drive the coding agent on demand.
@@ -25,7 +25,7 @@ Three upstream source projects, one locally-authored component, and a shell glue
 | 2 | **hermes-agent** | Always-on Discord "GJC Brain": chat, cron scheduler, kanban; drives gjc via MCP | Python | `~/github/engels74/gjc/hermes-agent` | `~/.hermes` | `hermes-gateway.service` |
 | 3 | **clawhip** | Event-to-Discord notification router; polls GitHub, writes the issue spool | Rust | `~/github/engels74/gjc/clawhip` | `~/.clawhip` | `clawhip.service` (daemon on 127.0.0.1:25294) |
 | 4 | **gjc-relay** | Loopback proxy turning clawhip's plain-text Discord posts into styled embeds | Rust (local, ~710 lines) | `~/.gjc-relay/src` | `~/.gjc-relay` | `gjc-relay.service` (127.0.0.1:25295) |
-| 5 | **repo-bot** | Shell glue: issue → triage → gjc run → review → merge gate | Bash | `~/github/engels74-bot/gjc-bot-scripts` (pipeline-stage dirs: `intake/` `run/` `review/` `maintenance/` `lib/` `systemd/`) | `~/.repo-bot` (state) | systemd path unit + timers, 2 hermes cron jobs |
+| 5 | **gjc-bot** | Shell glue: issue → triage → gjc run → review → merge gate | Bash | `~/github/engels74-bot/gjc-bot-scripts` (pipeline-stage dirs: `intake/` `run/` `review/` `maintenance/` `lib/` `systemd/`) | `~/.repo-bot` (state) | systemd path unit + timers, 2 hermes cron jobs |
 
 Also on the field: **`engels74-bot`** (the bot's GitHub identity), **`augmentcode[bot]`** (external
 PR reviewer the pipeline reacts to), **headless `claude`** (Claude Code, used only as the review
@@ -37,9 +37,12 @@ verdicts).
 A common misread: the source checkouts are **not** where the services run. Two distinct GitHub
 areas, and a build/install step in between:
 
-- **`~/github/engels74-bot/` — the user's OWN `gjc-*` projects**: `gjc-bot-scripts` (the repo-bot
+- **`~/github/engels74-bot/` — the user's OWN `gjc-*` projects**: `gjc-bot-scripts` (the gjc-bot
   shell glue), `gjc-server-tool` (the `stackman` ops console), and `gjc-architecture` (this doc
-  set). These commit as the `engels74-bot` identity.
+  set). These commit as the `engels74-bot` identity. Its **`fleet/` subfolder** holds every
+  pipeline-owned working copy — the six `engels74/*` app clones, their `*.gajae-code-worktrees/`
+  buckets, and the isolated `review/` checkouts (moved there 2026-07-07; the scripts' `GH_ROOT`,
+  clawhip's monitor paths, and hermes' workdir roots all point at `~/github/engels74-bot/fleet`).
 - **`~/github/engels74/gjc/` — three UPSTREAM third-party engines**, cloned as *reference source
   only* (they are *not* under `engels74-bot`, *not* the user's own repos, and *not* where the apps
   run from): `gajae-code` (remote `Yeachan-Heo/gajae-code`), `hermes-agent`
@@ -79,7 +82,7 @@ flowchart LR
 
     CH[clawhip daemon<br/>:25294] -- "poll 60s" --> REPOS
     CH -- "issue-opened record" --> SPOOL[(~/.repo-bot/<br/>issue-spool.jsonl)]
-    SPOOL -- "systemd .path" --> RB[repo-bot scripts<br/>triage → run → review → gate]
+    SPOOL -- "systemd .path" --> RB[gjc-bot scripts<br/>triage → run → review → gate]
     RB -- "gjc -p in worktree" --> GJC[gjc coding agent]
     RB -- "claude -p (review handler)" --> CC[claude headless]
     GJC -- "push + PR as engels74-bot" --> REPOS
@@ -130,7 +133,7 @@ subscription (`gpt-5.5`). Timeline & staleness:
 
 1. This page, then the diagram + tables in [README.md](README.md).
 2. [60-data-flow-and-integration.md](60-data-flow-and-integration.md) — how it actually works.
-3. [40-repo-bot-automation.md](40-repo-bot-automation.md) — the spine, script by script.
+3. [40-gjc-bot-automation.md](40-gjc-bot-automation.md) — the spine, script by script.
 4. Component pages as needed: [10](10-gajae-code.md) · [20](20-hermes-agent.md) ·
    [30](30-clawhip.md) · [35](35-gjc-relay.md).
 5. [50](50-configuration-and-state.md) + [70](70-deployment-and-operations.md) for state/ops,
@@ -148,10 +151,10 @@ subscription (`gpt-5.5`). Timeline & staleness:
   structurally unchanged. Added the relay watchdog note (dlq-watch/relay-alert), the 2026-07-07
   wave + Codex model switch to the history paragraph.
 - 2026-07-07 (repo-move pass) — Docs relocated to the `gjc-architecture` git repo (was
-  `~/documentation/architecture/`). Fixed dead source path: repo-bot component row now cites
+  `~/documentation/architecture/`). Fixed dead source path: gjc-bot component row now cites
   `~/github/engels74-bot/gjc-bot-scripts` (renamed from `gjc-bot`) with its new pipeline-stage
   layout, replacing the dead `~/scripts/repo-bot`; confirmed all four subfolders + `systemd/` on
-  disk and all four systemd units' `ExecStart=` paths live. Topology diagram's `repo-bot scripts`
+  disk and all four systemd units' `ExecStart=` paths live. Topology diagram's `gjc-bot scripts`
   node re-checked against the actual stage order (intake → run → review/merge-gate) — unchanged,
   still accurate. Rows 1–4 of the component table re-confirmed against live paths; no drift found.
   No `gjc-server-tool`/stackman ops-console reference exists on this page (nothing to rename).
@@ -168,3 +171,9 @@ subscription (`gpt-5.5`). Timeline & staleness:
   `__editable__` marker): clawhip = `cargo install` from crates.io (v0.6.11), gjc = bun global
   package (v0.9.0), hermes = separate deployed copy + editable venv under `~/.hermes` (v0.18.0),
   gjc-relay = built in place. Noted the fleet apps are not brew formulae (linuxbrew = base toolchain).
+- 2026-07-07 (fleet/ move + component rename) — The shell-glue component is now consistently
+  named **gjc-bot** across the doc set (page 40 renamed to `40-gjc-bot-automation.md`;
+  `~/.repo-bot` and `REPO_BOT_*` keep the historical "repo-bot" name). The six working clones,
+  their worktree buckets, and `review/` moved into `~/github/engels74-bot/fleet/`; the "lives and
+  runs" subsection now documents the fleet/ layout. All fleet configs (scripts' `GH_ROOT`,
+  clawhip monitor paths, hermes workdir roots/cwd/SOUL.md) re-pointed and services re-verified live.

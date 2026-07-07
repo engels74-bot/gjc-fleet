@@ -43,7 +43,7 @@ Everything lives in `~/.gjc-relay/` (deliberately outside the three "protected" 
 |---|---|
 | `gjc-relay` (~1.8 MB ELF) | The compiled static binary the service runs |
 | `src/main.rs`, `Cargo.toml` | Source (own crate `gjc-relay` 1.0.0; build tree out-of-tree) |
-| `design-system.json` | **Single source of truth** for embed styling: 23 `kind`s (22 event kinds + `default`) → color/emoji/title, timezone Europe/Berlin. Also read by repo-bot's `lib/discord-embed.sh` (now `~/github/engels74-bot/gjc-bot-scripts/lib/discord-embed.sh`, post `gjc-bot`→`gjc-bot-scripts` reorg) so both emitters render identically |
+| `design-system.json` | **Single source of truth** for embed styling: 23 `kind`s (22 event kinds + `default`) → color/emoji/title, timezone Europe/Berlin. Also read by gjc-bot's `lib/discord-embed.sh` (now `~/github/engels74-bot/gjc-bot-scripts/lib/discord-embed.sh`, post `gjc-bot`→`gjc-bot-scripts` reorg) so both emitters render identically |
 | `relay.env` | `RELAY_BIND=127.0.0.1:25295`, `RELAY_DESIGN_SYSTEM`. Header comment states it holds **no token** — the bot token arrives per-request in the forwarded `Authorization` header and is never stored |
 | `dlq-watch.sh` | Out-of-band DLQ-bury alarm (see below) |
 | `alert.sh` | `OnFailure` alarm for the relay itself |
@@ -79,14 +79,14 @@ degrade, 429 mirroring, caps, UTF-8 (test module `main.rs:518-708`).
 
 Producers of `GJCEMBED1` envelopes:
 - clawhip route `template = "GJCEMBED1 kind=… :: …"` lines (`~/.clawhip/config.toml:58-83`).
-- repo-bot's `lib/discord-embed.sh` (`~/github/engels74-bot/gjc-bot-scripts/lib/discord-embed.sh`),
+- gjc-bot's `lib/discord-embed.sh` (`~/github/engels74-bot/gjc-bot-scripts/lib/discord-embed.sh`),
   which builds the same envelope and sends it via `clawhip send` (see
-  [40-repo-bot-automation.md](40-repo-bot-automation.md#shared-lib)).
+  [40-gjc-bot-automation.md](40-gjc-bot-automation.md#shared-lib)).
 
 ## Scope — what does and does not flow through it
 
 - **Through the relay:** every clawhip **bot-token channel send** (the only kind the live config
-  uses). That covers all GitHub monitor events, all repo-bot narration and verdicts.
+  uses). That covers all GitHub monitor events, all gjc-bot narration and verdicts.
 - **Not through the relay:** hermes' conversational replies (own bot identity, plain markdown —
   deliberately excluded because hermes' Discord adapter is content-only and the plan forbade
   source changes); clawhip **webhook-URL** sends, which use a separate HTTP client that ignores
@@ -114,7 +114,7 @@ Live journal evidence (2026-07-06): `[transform] POST …/messages kind=github.p
 - **clawhip → relay → Discord** is the fleet's entire embed path; see the topology diagram in
   [00-overview.md](00-overview.md).
 - The **design system** is shared: relay templates (clawhip side) and `discord_embed()`
-  (`~/github/engels74-bot/gjc-bot-scripts/lib/discord-embed.sh`, repo-bot side) both resolve
+  (`~/github/engels74-bot/gjc-bot-scripts/lib/discord-embed.sh`, gjc-bot side) both resolve
   styling from `~/.gjc-relay/design-system.json`, so a given `kind` looks identical regardless of
   emitter.
 - Documented in `~/.omc/plans/discord-unification-plan.md` (design),
@@ -168,3 +168,5 @@ Live journal evidence (2026-07-06): `[transform] POST …/messages kind=github.p
 - 2026-07-07 (runbook-retirement pass) — Reframed the two references to the earlier hermes-stack
   build-log/runbook (maintainer note + the "predated the relay" line) to past tense; that build-log
   has been deleted and this doc set is the single source of truth. No path now points at it.
+- 2026-07-07 (fleet/ move + component rename) — Terminology only: repo-bot → **gjc-bot**;
+  cross-links updated to `40-gjc-bot-automation.md`. No relay behavior change.

@@ -17,16 +17,17 @@ maintainer_notes: >
 | Term | Meaning |
 |---|---|
 | **gjc / gajae-code** | The coding-agent harness (goal → patch → checks → PR), worktree-isolated, tmux-capable; binary `~/.bun/bin/gjc`. [10-gajae-code.md](10-gajae-code.md) |
-| **robogjc** | A *deliverable inside the gajae-code repo* (`python/robogjc/`): a self-hosted GitHub triage-and-fix bot driving `gjc --mode rpc`. **Not deployed on this machine** — the live issue lane is repo-bot's shell pipeline. (Neither the earlier build-log nor `.omc` mentioned it; earlier confusion treating it as an alias for the automated lane is resolved.) |
+| **robogjc** | A *deliverable inside the gajae-code repo* (`python/robogjc/`): a self-hosted GitHub triage-and-fix bot driving `gjc --mode rpc`. **Not deployed on this machine** — the live issue lane is gjc-bot's shell pipeline. (Neither the earlier build-log nor `.omc` mentioned it; earlier confusion treating it as an alias for the automated lane is resolved.) |
 | **hermes / hermes-agent** | Python messaging/orchestration agent (Nous Research); runs the Discord gateway, cron, kanban. [20-hermes-agent.md](20-hermes-agent.md) |
 | **GJC Brain** | The hermes Discord bot identity — the conversational brain the user talks to |
 | **GJC Clawhip** | The clawhip Discord bot identity — post-only notifier |
 | **clawhip** | Rust event-to-Discord router: polls GitHub, receives CLI/HTTP events, routes to sinks; daemon on 127.0.0.1:25294. [30-clawhip.md](30-clawhip.md) |
 | **gjc-relay** | Locally-authored Rust loopback proxy on 127.0.0.1:25295 that rewrites clawhip's plain-text Discord REST calls into rich embeds. **Post-dated the earlier build-log (now retired), which never mentioned it.** [35-gjc-relay.md](35-gjc-relay.md) |
 | **relay (hermes sense)** | A hermes-native messaging *platform type* (`gateway/relay/`) — a WebSocket transport, **unrelated to gjc-relay**. Naming collision; always disambiguate |
-| **repo-bot** | The shell glue layer sequencing issue → run → review → merge-gate. Lives in the `gjc-bot-scripts` repo (`~/github/engels74-bot/gjc-bot-scripts/`); the old `~/scripts/repo-bot/` path is dead. [40-repo-bot-automation.md](40-repo-bot-automation.md) |
-| **gjc-bot-scripts** | The repo holding the repo-bot shell pipeline (renamed from `engels74-bot/gjc-bot` on 2026-07-07). Reorganized by pipeline stage: `intake/`, `run/`, `review/`, `maintenance/`, `lib/`, `systemd/`. Scripts self-locate their repo root via `SCRIPTS_DIR` (`REPO_BOT_SCRIPTS` override still honored). [40-repo-bot-automation.md](40-repo-bot-automation.md) |
+| **gjc-bot** | The shell glue layer sequencing issue → run → review → merge-gate. Lives in the `gjc-bot-scripts` repo (`~/github/engels74-bot/gjc-bot-scripts/`); the old `~/scripts/repo-bot/` path is dead. Formerly written "repo-bot" — the `~/.repo-bot` state dir and `REPO_BOT_*` env prefix keep the historical name. [40-gjc-bot-automation.md](40-gjc-bot-automation.md) |
+| **gjc-bot-scripts** | The repo holding the gjc-bot shell pipeline (renamed from `engels74-bot/gjc-bot` on 2026-07-07). Reorganized by pipeline stage: `intake/`, `run/`, `review/`, `maintenance/`, `lib/`, `systemd/`. Scripts self-locate their repo root via `SCRIPTS_DIR` (`REPO_BOT_SCRIPTS` override still honored). [40-gjc-bot-automation.md](40-gjc-bot-automation.md) |
 | **stackman / server-script / gjc-server-tool** | The Textual TUI ops console (Python). Repo/dir renamed `engels74-bot/server-tool` → `engels74-bot/gjc-server-tool` on 2026-07-07 (`~/github/engels74-bot/gjc-server-tool/`); the Python package `server_script` and the `stackman`/`server-script` console entrypoints are unchanged. Not part of the automated pipeline. |
+| **fleet / fleet clone root** | `~/github/engels74-bot/fleet/` — the subfolder holding every pipeline-owned working copy (the six app clones, their `*.gajae-code-worktrees/` buckets, the `review/` checkouts) since 2026-07-07. The scripts' `GH_ROOT`, clawhip's `[[monitors.git.repos]] path`s, and hermes' `GJC_COORDINATOR_MCP_WORKDIR_ROOTS`/`terminal.cwd` all point here; the root of `~/github/engels74-bot/` holds only the bot's own `gjc-*` repos. |
 | **GJCEMBED1** | The delimiter-envelope prefix (`GJCEMBED1 key=value … :: tail`) that marks a message for embed rendering by gjc-relay |
 | **design system** | `~/.gjc-relay/design-system.json` — the single styling source (event kind → color/emoji/title) shared by the relay and `discord-embed.sh` |
 | **DLQ / bury** | clawhip's dead-letter queue: in-memory only; a "buried" notification is permanently lost. `gjc-dlq-watch` alarms on it |
@@ -37,7 +38,7 @@ maintainer_notes: >
 | **engels74-bot** | The dedicated bot GitHub identity (Write collaborator) authoring all automated PRs |
 | **augmentcode[bot]** | External GitHub app that auto-reviews PRs; its "N suggestions" reviews trigger the review lane |
 | **Coordinator MCP** | gjc's outward MCP control plane (`gjc mcp-serve coordinator`) — how hermes drives gjc |
-| **brain model** | The cheap **no-tools** LLM for repo-bot triage/merge verdicts: `minimax/minimax-m3` via NanoGPT (formerly DeepSeek in the earlier build-log's plan). Since 2026-07-07 hermes' *conversational* brain is separate: `gpt-5.5` via the OpenAI Codex subscription ([20-hermes-agent.md](20-hermes-agent.md#purpose)) |
+| **brain model** | The cheap **no-tools** LLM for gjc-bot triage/merge verdicts: `minimax/minimax-m3` via NanoGPT (formerly DeepSeek in the earlier build-log's plan). Since 2026-07-07 hermes' *conversational* brain is separate: `gpt-5.5` via the OpenAI Codex subscription ([20-hermes-agent.md](20-hermes-agent.md#purpose)) |
 | **oh-my-pi / pi-*** | gajae-code's upstream lineage (`can1357/oh-my-pi`); explains `pi-natives`, `PI_ROOT`, and stale `can1357` URLs |
 | **Phase A–G** | The incremental build phases from the earlier hermes-stack build-log (now retired): jq → hermes brain → bot identity → Discord → clawhip → gjc → automation + 6-repo fan-out |
 | **Discord unification** | The 2026-07-06 evening wave (`.omc` plan/progress) that added gjc-relay, route templates, `discord_embed`, and the SOUL.md voice alignment |
@@ -59,12 +60,23 @@ reorganized into `intake/`, `run/`, `review/`, `maintenance/`, `lib/`, `systemd/
 `engels74-bot/server-tool` → **`gjc-server-tool`** (the stackman TUI console; package/entrypoints
 unchanged). The old `~/scripts/repo-bot/` tree is gone; scripts now self-locate their repo root
 (`SCRIPTS_DIR` derived from `BASH_SOURCE`, fixing a runtime break where `issue-spool-adapter` could
-not source `lib/discord-embed.sh`). The four repo-bot systemd units were reinstalled to
+not source `lib/discord-embed.sh`). The four gjc-bot systemd units were reinstalled to
 `/etc/systemd/system/` (`ExecStart=` under `…/gjc-bot-scripts/<subfolder>/`, `daemon-reload`, all
 `Result=success`), and the hermes cron real-file wrappers re-`exec` the new subfolder paths. These
 architecture docs also moved from `~/documentation/architecture/` into the `gjc-architecture` git
 repo (a stale copy remains under `~/documentation/architecture/`).
 > [inferred] The `~/documentation/architecture/` copy is a pre-move leftover, not a maintained fork.
+
+**2026-07-07 fleet/ move + component rename (`.bak-fleetmove-*` markers in `~/.clawhip` and `~/.hermes`).**
+The six working clones, their `*.gajae-code-worktrees/` buckets, and the `review/` checkouts moved
+from `~/github/engels74-bot/` into `~/github/engels74-bot/fleet/`, leaving the root to the bot's
+own `gjc-*` repos. Re-pointed in the same wave: all eight scripts' `GH_ROOT` default
+(gjc-bot-scripts commit `59142f9`), clawhip's six `[[monitors.git.repos]] path`s, hermes'
+`GJC_COORDINATOR_MCP_WORKDIR_ROOTS` + `terminal.cwd` + SOUL.md workspace conventions; the two git
+worktree link files were repaired to the new absolute paths, clawhip + hermes-gateway restarted,
+and all lanes re-verified live. The doc set simultaneously settled the component name **gjc-bot**
+(formerly written "repo-bot"; page 40 renamed accordingly, `~/.repo-bot` + `REPO_BOT_*` keep the
+historical on-disk name).
 
 ## Open questions
 
@@ -77,7 +89,7 @@ Highest-signal first. Per-page questions are also listed on each component page.
    architecture-native one-shot rewrite (detector as outer loop, trigger-comment re-review,
    battle-tested GitHub command blocks retained); **live-verified 2026-07-07** with two clean
    back-to-back handler runs on easyhdr#115. See
-   [40-repo-bot-automation.md](40-repo-bot-automation.md#discrepancies). Residual unknown: why
+   [40-gjc-bot-automation.md](40-gjc-bot-automation.md#discrepancies). Residual unknown: why
    the original vanished.
 2. **Relay permanence & reliability posture** — is gjc-relay (in-path single point of failure for
    all notifications, compensated only by infinite-restart + out-of-band alarms) the intended end
@@ -90,7 +102,7 @@ Highest-signal first. Per-page questions are also listed on each component page.
    on easyhdr#115 (a hermes-delegated gjc session and the review handler pushing the same PR
    branch with no shared lock). Behaviorally mitigated via `~/.hermes/SOUL.md` rebase-before-push
    rules; a structural lock is still open.
-   ([40-repo-bot-automation.md](40-repo-bot-automation.md#open-questions))
+   ([40-gjc-bot-automation.md](40-gjc-bot-automation.md#open-questions))
 5. **`gjc-reap.sh` wiring** — header claims a clawhip `tmux.stale` trigger that doesn't exist;
    manual-only today. Re-enable the route (and tmux monitors), or update the header?
 6. **Kanban's role** — the board exists and the dispatcher machinery is rich, but the live
@@ -125,7 +137,7 @@ Highest-signal first. Per-page questions are also listed on each component page.
 - 2026-07-07 (repo-move pass) — Status → verified. Recorded the 2026-07-07 repo renames
   (`gjc-bot` → `gjc-bot-scripts`, `server-tool` → `gjc-server-tool`), the stage-based script
   reorg, and script self-location in a new wave-timeline entry; added `gjc-bot-scripts` and
-  `stackman/gjc-server-tool` glossary rows; reconciled the `repo-bot` glossary entry off the dead
+  `stackman/gjc-server-tool` glossary rows; reconciled the `gjc-bot` glossary entry off the dead
   `~/scripts/repo-bot/` path. New OQ#8: `restore.sh:137` `rm -rf ~/scripts/repo-bot` no-op
   (catch-all renumbered 8→9). Fixed runbook path drift (`~/documentation/…` → `~/downloads/…`).
 - 2026-07-07 (runbook-retirement pass) — The earlier hermes-stack build-log/runbook has been
@@ -134,3 +146,6 @@ Highest-signal first. Per-page questions are also listed on each component page.
   [30-clawhip.md](30-clawhip.md)), and removed OQ "Runbook's future" (remaining OQs renumbered
   7→8's neighbours: old #8/#9 → #7/#8). Reframed the robogjc, gjc-relay, brain-model, and Phase A–G
   glossary rows plus the wave-timeline note to past tense ("earlier build-log, now retired").
+- 2026-07-07 (fleet/ move + component rename) — Glossary: gjc-bot entry notes the historical
+  "repo-bot" working name (kept by `~/.repo-bot` + `REPO_BOT_*`); new **fleet / fleet clone root**
+  entry; new wave-timeline paragraph for the fleet/ move. Page-40 cross-links renamed.

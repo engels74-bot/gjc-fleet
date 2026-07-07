@@ -50,13 +50,13 @@ locations. See [00-overview.md](00-overview.md#where-each-component-lives-and-ru
 ### Scheduled lanes (systemd timers/path + hermes cron)
 
 See the full table in
-[40-repo-bot-automation.md](40-repo-bot-automation.md#scheduling-map). Summary: a **path unit**
+[40-gjc-bot-automation.md](40-gjc-bot-automation.md#scheduling-map). Summary: a **path unit**
 fires the issue intake on spool writes (with a 5-min backup timer); **timers** run
 review-detector (5 min), merge-gate (10 min), and the worktree janitor (2 min); **hermes cron**
 (a ticker inside the gateway, *not* systemd) runs the nightly stale-branch report and the weekly
 issue-triage digest.
 
-All four repo-bot units' `ExecStart=` were relocated this session and verified live in
+All four gjc-bot units' `ExecStart=` were relocated this session and verified live in
 `/etc/systemd/system/` (reinstalled + `daemon-reload`, all `Result=success`): `issue-spool-adapter`
 → `…/gjc-bot-scripts/intake/issue-spool-adapter.sh`, `review-detector` →
 `…/gjc-bot-scripts/review/review-detector.sh`, `merge-gate` → `…/gjc-bot-scripts/review/merge-gate.sh`,
@@ -77,7 +77,7 @@ issue-triage-fetch}.sh` are real-file (non-symlink) shims that now `exec` the ne
 
 Loopback only; no inbound ports for the fleet: `127.0.0.1:25294` (clawhip daemon),
 `127.0.0.1:25295` (gjc-relay). Hermes' webhook platform (would be 0.0.0.0:8644) and API server
-are **disabled**. All external I/O is outbound: GitHub API, NanoGPT API (repo-bot triage/gate),
+are **disabled**. All external I/O is outbound: GitHub API, NanoGPT API (gjc-bot triage/gate),
 OpenAI Codex API (hermes brain, since 2026-07-07), Discord API. This upholds the fleet's
 "no inbound ports / no standing sudo" safety rails.
 
@@ -94,7 +94,7 @@ OpenAI Codex API (hermes brain, since 2026-07-07), Discord API. This upholds the
 Local git commit identity is enforced per-directory via `~/.gitconfig` `includeIf` blocks: work
 under `gitdir:/home/cvps/github/engels74-bot/` loads `~/.gitconfig-engels74-bot` (the bot identity),
 while `gitdir:/home/cvps/github/engels74/` loads `~/.gitconfig-engels74` (the human). Verified live
-2026-07-07 — the `engels74-bot` `includeIf` still holds, so all repo-bot repos (including the
+2026-07-07 — the `engels74-bot` `includeIf` still holds, so all gjc-bot repos (including the
 relocated `gjc-bot-scripts`) commit as the bot.
 
 ## Logs & observability
@@ -140,7 +140,7 @@ teardown. Config waves additionally leave dated `.bak-*` files next to each edit
   network posture (loopback :25294/:25295 only, hermes webhook :8644 not listening), identities,
   and log locations re-verified live — no drift. Added the Codex API to the outbound-I/O list and
   updated the cron-ticker open question for the third (PR-115 monitor) job.
-- 2026-07-07 (repo-move pass) — Status → verified. Re-verified all four repo-bot units live in
+- 2026-07-07 (repo-move pass) — Status → verified. Re-verified all four gjc-bot units live in
   `/etc/systemd/system/`: `ExecStart=` now under `~/github/engels74-bot/gjc-bot-scripts/<subfolder>/`
   (intake/review/maintenance), reinstalled + `daemon-reload`, all `Result=success`; timers/path unit
   active. Documented the hermes cron real-file wrappers now `exec`-ing the new subfolder paths. Added
@@ -158,3 +158,6 @@ teardown. Config waves additionally leave dated `.bak-*` files next to each edit
   are reference-only (not the build input); each app installs via its own channel (bun global,
   `cargo install` from crates.io, hermes deployed-copy venv), only gjc-relay is built in place, and
   the fleet apps are not brew formulae.
+- 2026-07-07 (fleet/ move + component rename) — Terminology only: repo-bot → **gjc-bot**;
+  cross-links updated. The `~/.gitconfig` `includeIf "gitdir:/home/cvps/github/engels74-bot/"`
+  prefix still covers the new `fleet/` subfolder, so the bot identity is unaffected (verified).

@@ -4,7 +4,7 @@ last_verified: 2026-07-07
 sources:
   - ~/github/engels74-bot/gjc-bot-scripts/ (pipeline-stage layout: intake/ run/ review/
     maintenance/ lib/ systemd/ — the flat ~/scripts/repo-bot/ path is DEAD/removed)
-  - /etc/systemd/system/ (installed copies of the repo-bot units; ExecStart now points
+  - /etc/systemd/system/ (installed copies of the gjc-bot units; ExecStart now points
     into gjc-bot-scripts/<stage>/)
   - ~/.hermes/scripts/ (real-file cron wrappers that exec the maintenance/ + intake/ scripts)
   - ~/.repo-bot/ (ledgers, locks, logs — runtime evidence)
@@ -15,7 +15,7 @@ maintainer_notes: >
   to the repo root ~/github/engels74-bot/gjc-bot-scripts/.
 -->
 
-# repo-bot — the shell glue pipeline
+# gjc-bot — the shell glue pipeline
 
 > This layer is the spine of the automated system: it sequences
 > **issue → triage → agent run → PR → review handling → merge gate**.
@@ -46,20 +46,21 @@ Two trigger fabrics drive it: **clawhip** (polls GitHub, emits events, writes th
 coding agent) and **headless `claude`** (the review handler); clawhip (through gjc-relay) is the
 Discord narration bus. Hermes participates only via two cron jobs (through real-file wrappers).
 
-Conventions used below: `STATE_DIR` = `~/.repo-bot`, `GH_ROOT` = `~/github/engels74-bot`,
-`SCRIPTS_DIR` = the gjc-bot-scripts repo root, bot login = `engels74-bot`. The six **monitored**
-application repos are fixed in the clawhip config (`~/.clawhip/config.toml [[monitors.git.repos]]`):
+Conventions used below: `STATE_DIR` = `~/.repo-bot` (the state dir and the `REPO_BOT_*` env-var
+prefix keep the component's historical "repo-bot" working name — on-disk identifiers were not
+renamed when the component name settled on **gjc-bot**), `GH_ROOT` = `~/github/engels74-bot/fleet`
+(the **fleet clone root** — since the 2026-07-07 fleet/ move, all pipeline-owned working copies
+live in this subfolder, keeping the root of `~/github/engels74-bot/` to the bot's own `gjc-*`
+projects), `SCRIPTS_DIR` = the gjc-bot-scripts repo root, bot login = `engels74-bot`. The six
+**monitored** application repos are fixed in the clawhip config
+(`~/.clawhip/config.toml [[monitors.git.repos]]`):
 `easyhdr`, `mover-status`, `obzorarr`, `otpravkarr`, `perevoditarr`, `zondarr`. The script-side lanes
 (review-detector, merge-gate, stale-branches, issue-triage-fetch, janitor) instead **auto-discover**
 by globbing `GH_ROOT` for any `.git` repo (excluding `review/` and `*.gajae-code-worktrees`,
-`review/review-detector.sh:34`). Scaling model: *clone an app repo and it's in the fleet.*
-
-> [inferred] Because the auto-discovery is a bare `GH_ROOT` glob, the infrastructure repos now
-> co-located under `~/github/engels74-bot/` — `gjc-bot-scripts`, `gjc-server-tool`, `gjc-architecture`
-> — are ALSO matched by those five glob-driven lanes (9 repos matched on disk today, vs the 6
-> monitored apps). In practice the PR-driven lanes (review-detector, merge-gate) no-op on them
-> because no `engels74-bot`-authored PRs exist there, but `stale-branches.sh` and
-> `issue-triage-fetch.sh` would report/scan them. Noted as an open question below.
+`review/review-detector.sh:34`). Scaling model: *clone an app repo into `fleet/` and it's in the
+fleet.* Because the glob is scoped to `fleet/`, the discovered set is exactly the 6 monitored apps —
+the infra repos (`gjc-bot-scripts`, `gjc-server-tool`, `gjc-architecture`) sit one level up, outside
+the glob (before the fleet/ move they were swept accidentally; see Open questions).
 
 ## Pipeline at a glance
 
@@ -156,7 +157,7 @@ just mark seen. `RUNNER` defaults to `$SCRIPTS_DIR/review/review-run.sh` (`:28`)
 
 Launcher for the **AI Code Review Handler** — a headless Claude Code run (`review/review-run.sh:1-115`).
 `launcher` (`:66-91`): non-blocking `review.lock` precheck (rc 75), `ensure_checkout` maintains an
-**isolated** per-repo clone at `~/github/engels74-bot/review/<repo>` (own `.git`, never contends
+**isolated** per-repo clone at `~/github/engels74-bot/fleet/review/<repo>` (own `.git`, never contends
 with the gjc lane, `:53-64`), `sed`-fills the Config block of the handler template
 (REPO/PR_ID/REVIEW_ID/CODING_GUIDELINES/MODEL_PRIMARY=opus/MODEL_FAST=sonnet, `:81-87`;
 `CODING_GUIDELINES` defaults to `AGENTS.md`, `:29`), then `setsid _handler`. The template path is
@@ -275,7 +276,7 @@ copies 2026-07-07). Unit subtlety: `issue-spool-adapter.service` and `review-det
 `PrivateTmp` (needs the user tmux socket in `/tmp`).
 
 > [inferred] The hermes cron also carries a third, self-scheduled agent job
-> (`monitor-easyhdr-pr115-rustsec`, `every 60m`) that does **not** touch repo-bot — it is a transient
+> (`monitor-easyhdr-pr115-rustsec`, `every 60m`) that does **not** touch gjc-bot — it is a transient
 > monitor, not part of this pipeline.
 
 ## Worktree & branch lifecycle
@@ -361,11 +362,12 @@ State in `~/.repo-bot/`: locks (`gjc.lock`, `review.lock`, `issues.lock`, `merge
 - `merge-gate.sh` and `review-run.sh` share `review.lock` — confirm this mutual exclusion
   (merge-gate defers while a handler mutates the PR) is a deliberate contract rather than
   incidental lock reuse.
-- **Glob auto-discovery now sweeps the infra repos.** The five glob-driven lanes match any `.git`
-  repo under `GH_ROOT`; today that includes `gjc-bot-scripts`, `gjc-server-tool`, and
-  `gjc-architecture` alongside the 6 monitored apps (9 total). PR lanes no-op on them, but
-  `stale-branches.sh`/`issue-triage-fetch.sh` will report/scan them. Should the glob exclude
-  non-app repos (e.g. an allowlist or a `.repo-bot-fleet` marker), or is the broad sweep intended?
+- ~~**Glob auto-discovery now sweeps the infra repos.**~~ **Resolved 2026-07-07 (fleet/ move):**
+  the working clones moved to `~/github/engels74-bot/fleet/` and `GH_ROOT` now defaults there, so
+  the five glob-driven lanes match exactly the 6 monitored apps; the infra repos
+  (`gjc-bot-scripts`, `gjc-server-tool`, `gjc-architecture`) sit one level up, outside the glob.
+  Accepted side effect: the infra repos are no longer covered by
+  `stale-branches.sh`/`issue-triage-fetch.sh` either (their branches/issues are human-managed).
 - **`restore.sh` still references the dead path.** `~/scripts/backuprestore/restore.sh` retains
   `rm -rf ~/scripts/repo-bot` — now a no-op (the dir is gone; the scripts live in the git repo).
   Left as-is deliberately this session (deleting the git repo on restore would be a destructive
@@ -403,3 +405,12 @@ State in `~/.repo-bot/`: locks (`gjc.lock`, `review.lock`, `issues.lock`, `merge
   build-log/runbook (the `worktree_target_mismatch` "critical recurring bug" note and the
   coordinator-rewire open-question aside) to past tense; that build-log has been deleted and this
   doc set is the single source of truth.
+- 2026-07-07 (fleet/ move + component rename) — Page renamed `40-repo-bot-automation.md` →
+  `40-gjc-bot-automation.md`; the component is now consistently called **gjc-bot** throughout the
+  doc set (the on-disk `~/.repo-bot` state dir and `REPO_BOT_*` env prefix keep the historical
+  name). The six working clones, their `*.gajae-code-worktrees/` buckets, and `review/` moved into
+  `~/github/engels74-bot/fleet/`; all eight scripts' `GH_ROOT` default now points there
+  (gjc-bot-scripts commit `59142f9`), clawhip's six `[[monitors.git.repos]] path` entries and
+  hermes' `GJC_COORDINATOR_MCP_WORKDIR_ROOTS`/`terminal.cwd`/SOUL.md conventions updated to match;
+  services restarted and re-verified live (janitor walks fleet/ paths, merge-gate clean, clawhip
+  polling, coordinator MCP env confirmed). Glob-sweep open question resolved by the move.

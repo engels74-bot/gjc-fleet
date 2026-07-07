@@ -25,7 +25,7 @@ memory, scheduled jobs, and a kanban work-dispatch system.
 
 **In this deployment** hermes is the **"GJC Brain"** — the conversational Discord bot the user talks
 to, which can drive gajae-code via gjc's Coordinator MCP, and which runs three scheduled jobs via
-its internal cron (two repo-bot jobs plus a self-scheduled EasyHDR PR-115 monitor). Live model:
+its internal cron (two gjc-bot jobs plus a self-scheduled EasyHDR PR-115 monitor). Live model:
 `gpt-5.5` via the **OpenAI Codex subscription** (`~/.hermes/config.yaml`, `model.default: gpt-5.5`
 / `provider: openai-codex`; switched from NanoGPT/`minimax-m3` on 2026-07-07). Credentials resolve
 from the OAuth credential pool in `~/.hermes/auth.json`, not from a NanoGPT key;
@@ -104,7 +104,7 @@ dynamic subscriptions in `~/.hermes/webhook_subscriptions.json`). **Neither is e
 deployment** — no `WEBHOOK_ENABLED` in `.env` and no `webhook_subscriptions.json` on disk. The
 "issue-intake webhook" mentioned in `issue-spool-adapter.service`'s description is a *dynamic
 subscription that was never created*; the live intake path dispatches to `gjc-run.sh` directly
-(see [40-repo-bot-automation.md](40-repo-bot-automation.md#discrepancies)).
+(see [40-gjc-bot-automation.md](40-gjc-bot-automation.md#discrepancies)).
 
 ## The kanban subsystem
 
@@ -137,7 +137,7 @@ coordination primitive" (`hermes_cli/kanban_db.py:1-69`). Statuses:
   kernel), `kanban_diagnostics.py` (read-only rule engine).
 
 **Live status:** `~/.hermes/kanban.db` exists (with `.dispatch.lock` / `.init.lock`), i.e. the board
-is initialized, but no evidence was gathered of active cards in the repo-bot flow — the automated
+is initialized, but no evidence was gathered of active cards in the gjc-bot flow — the automated
 issue lane bypasses kanban entirely. > [inferred] Kanban is currently idle capacity.
 
 ## The cron subsystem
@@ -169,7 +169,7 @@ job specs containing gateway-lifecycle commands (prevents self-restart loops, is
 | `mover-status-issue-triage` | `0 9 * * 1` | agent (`web` toolset; per-job `model_snapshot` still `minimax/minimax-m3` — stale, predates the Codex switch) | prerun `issue-triage-fetch.sh` (wrapper → `~/github/engels74-bot/gjc-bot-scripts/intake/issue-triage-fetch.sh`) feeds a weekly issue digest | `#gjc-events` |
 | `monitor-easyhdr-pr115-rustsec` | every 60 m (interval, not cron-expr) | agent (`terminal,file,github` toolsets) | monitors `engels74/EasyHDR` PR #115 (RUSTSEC triage): runs `bash /tmp/_monitor_pr115.sh` each tick, snapshots to `~/.hermes/cron/output/pr115-*.log` + `pr115.state`, triages reviews/CI, self-removes on merge | `origin` (the #easyhdr RUSTSEC thread) |
 
-The two repo-bot jobs' `~/.hermes/scripts/*.sh` entries are real-file wrappers (hermes rejects
+The two gjc-bot jobs' `~/.hermes/scripts/*.sh` entries are real-file wrappers (hermes rejects
 symlinks for `--script`) that `exec` straight into the `gjc-bot-scripts` repo. **Verified live**
 (both wrapper files read 2026-07-07): they previously `exec`'d the now-dead
 `~/scripts/repo-bot/{stale-branches.sh,issue-triage-fetch.sh}` (that directory no longer exists)
@@ -196,9 +196,9 @@ provider=<provider> model=<model>` or removes it (PR #115 was still open, unmerg
 
 | Path | What it is |
 |---|---|
-| `config.yaml` (+ `.bak-discord-20260706-213503`, `.bak-yolo-20260706-*`) | Main config: model block (`gpt-5.5` / `openai-codex` since 2026-07-07; `providers.nanogpt` retained as revert stub), `discord:` block, `platform_toolsets`, `mcp_servers.gjc_coordinator` → `/home/cvps/.bun/bin/gjc mcp-serve coordinator`. Added 2026-07-06/07 (post-RUSTSEC-run tuning): `approvals.mode: "off"` + `approvals.cron_mode: approve` (full-auto, user-requested — dangerous-command prompts disabled; hardline blocklist still applies), `agent.max_turns: 300` (was 60; re-bridged into `HERMES_MAX_ITERATIONS` every turn, so config.yaml wins over .env), `terminal.cwd: ~/github/engels74-bot` (default terminal workdir — the `TERMINAL_CWD` env form is deprecated; NB the file defines `terminal:` **twice** — an early block with `cwd: .` and a later one with the engels74-bot path; YAML last-key-wins makes the latter effective, but the duplicate is a footgun for future edits), `mcp_servers.gjc_coordinator.timeout: 1800` (per-tool-call; default 300 s was too short for delegated coding tasks) |
-| `.env` (0600, ~23 KB) | Secrets by name: NanoGPT API key (now unused by the live model path), bot GitHub PAT (`GITHUB_TOKEN`), Discord bot token, `DISCORD_HOME_CHANNEL`, allowed users. **Also read by the repo-bot shell scripts** (see [50-configuration-and-state.md](50-configuration-and-state.md)). Upstream now ships a pluggable **SecretSource** interface (`agent/secret_sources/`: registry + Bitwarden + 1Password `op://` sources, ordered via a `secrets.sources` config key; commits 2026-07-06/07) — **this deployment configures none of them**: no `secrets:` block in `config.yaml`, no `op://` refs in `.env`. Live custody = `.env` (bulk) + `auth.json` (provider credentials) |
-| `SOUL.md` | Auto-injected agent voice/persona; rewritten during Discord unification to align with the design system's emoji lexicon. Extended 2026-07-06/07 with **Workspace conventions** (all repo work under `~/github/engels74-bot/`, never loose in `$HOME`) and **Delegation to gajae-code** (code changes go through the coordinator MCP tools — the brain investigates/triages, gjc codes; includes PR-branch push safety: rebase before push, never force-push). Read from disk at prompt-build time, so new sessions pick changes up without a restart |
+| `config.yaml` (+ `.bak-discord-20260706-213503`, `.bak-yolo-20260706-*`) | Main config: model block (`gpt-5.5` / `openai-codex` since 2026-07-07; `providers.nanogpt` retained as revert stub), `discord:` block, `platform_toolsets`, `mcp_servers.gjc_coordinator` → `/home/cvps/.bun/bin/gjc mcp-serve coordinator`. Added 2026-07-06/07 (post-RUSTSEC-run tuning): `approvals.mode: "off"` + `approvals.cron_mode: approve` (full-auto, user-requested — dangerous-command prompts disabled; hardline blocklist still applies), `agent.max_turns: 300` (was 60; re-bridged into `HERMES_MAX_ITERATIONS` every turn, so config.yaml wins over .env), `terminal.cwd: ~/github/engels74-bot/fleet` (default terminal workdir — the `TERMINAL_CWD` env form is deprecated; NB the file defines `terminal:` **twice** — an early block with `cwd: .` and a later one with the fleet path; YAML last-key-wins makes the latter effective, but the duplicate is a footgun for future edits), `mcp_servers.gjc_coordinator.timeout: 1800` (per-tool-call; default 300 s was too short for delegated coding tasks) |
+| `.env` (0600, ~23 KB) | Secrets by name: NanoGPT API key (now unused by the live model path), bot GitHub PAT (`GITHUB_TOKEN`), Discord bot token, `DISCORD_HOME_CHANNEL`, allowed users. **Also read by the gjc-bot shell scripts** (see [50-configuration-and-state.md](50-configuration-and-state.md)). Upstream now ships a pluggable **SecretSource** interface (`agent/secret_sources/`: registry + Bitwarden + 1Password `op://` sources, ordered via a `secrets.sources` config key; commits 2026-07-06/07) — **this deployment configures none of them**: no `secrets:` block in `config.yaml`, no `op://` refs in `.env`. Live custody = `.env` (bulk) + `auth.json` (provider credentials) |
+| `SOUL.md` | Auto-injected agent voice/persona; rewritten during Discord unification to align with the design system's emoji lexicon. Extended 2026-07-06/07 with **Workspace conventions** (all repo work under `~/github/engels74-bot/fleet/`, never loose in `$HOME`; layout bullet added 2026-07-07 with the fleet/ move) and **Delegation to gajae-code** (code changes go through the coordinator MCP tools — the brain investigates/triages, gjc codes; includes PR-branch push safety: rebase before push, never force-push). Read from disk at prompt-build time, so new sessions pick changes up without a restart |
 | `channel_directory.json` | Discovered Discord channels/threads for the guild |
 | `discord_threads.json` | Auto-thread participation persistence |
 | `gateway.pid`, `gateway.lock`, `gateway_state.json` | Gateway process state (`gateway_state: running`, `platforms.discord.state: connected`) |
@@ -218,15 +218,15 @@ provider=<provider> model=<model>` or removes it (PR #115 was still open, unmerg
 - **hermes → gjc:** via gjc's Coordinator MCP (`mcp_servers.gjc_coordinator` in `config.yaml`);
   live evidence: `bun …/gjc mcp-serve coordinator` runs as a child in the
   `hermes-gateway.service` cgroup. See [10-gajae-code.md](10-gajae-code.md#integration-surface-how-other-things-drive-gjc).
-- **hermes → repo-bot:** only via cron — the two repo-bot jobs above shell out to
+- **hermes → gjc-bot:** only via cron — the two gjc-bot jobs above shell out to
   `~/github/engels74-bot/gjc-bot-scripts/{maintenance/stale-branches.sh,intake/issue-triage-fetch.sh}`
   through real-file wrappers in `~/.hermes/scripts/`. (The third cron job, the PR-115 monitor, is
-  self-contained and does not touch repo-bot scripts.)
+  self-contained and does not touch gjc-bot scripts.)
 - **hermes → Discord:** conversational replies as plain markdown via its own bot identity
   ("GJC Brain"). **Hermes traffic does not pass through gjc-relay** and never produces embeds —
   by design (see [35-gjc-relay.md](35-gjc-relay.md#scope--what-does-and-does-not-flow-through-it)).
 - **hermes ← others:** nothing currently pushes into hermes programmatically — the webhook platform
-  is disabled and no `issue-intake` subscription exists. Shared secrets custody: repo-bot scripts
+  is disabled and no `issue-intake` subscription exists. Shared secrets custody: gjc-bot scripts
   grep `GITHUB_TOKEN`/`NANOGPT_API_KEY` out of `~/.hermes/.env` at runtime.
 - Naming hazard: hermes has a native platform type called `relay` (`gateway/relay/`) that is
   **unrelated** to `gjc-relay`. See the glossary.
@@ -264,7 +264,7 @@ provider=<provider> model=<model>` or removes it (PR #115 was still open, unmerg
   hermes cron-wrapper bugfix. Read both `~/.hermes/scripts/{stale-branches.sh,issue-triage-fetch.sh}`
   wrappers directly: confirmed they previously `exec`'d the now-dead `~/scripts/repo-bot/*` path and
   are now fixed to `exec` into `~/github/engels74-bot/gjc-bot-scripts/{maintenance,intake}/*.sh`;
-  updated the cron table and the "hermes → repo-bot" connection line accordingly. Re-confirmed
+  updated the cron table and the "hermes → gjc-bot" connection line accordingly. Re-confirmed
   against `~/.hermes/config.yaml`/`auth.json`/`SOUL.md`: model `gpt-5.5`/`openai-codex`,
   `agent.max_turns: 300`, `approvals.mode: "off"` + `cron_mode: approve`, `terminal.cwd`
   (duplicate-block behavior unchanged), `gjc_coordinator` command/timeout, and the credential-pool
@@ -276,3 +276,8 @@ provider=<provider> model=<model>` or removes it (PR #115 was still open, unmerg
   `openai-codex`/`gpt-5.5`) — documented under the cron table; PR #115 was still open/unmerged.
   Delivery channel names (`#gjc-approvals`, `#gjc-events`) cross-checked by name only against
   `~/.hermes/channel_directory.json` — no numeric IDs added to this page.
+- 2026-07-07 (fleet/ move + component rename) — repo-bot → **gjc-bot** terminology.
+  `terminal.cwd` and `GJC_COORDINATOR_MCP_WORKDIR_ROOTS` now point at
+  `~/github/engels74-bot/fleet` (config backed up as `.bak-fleetmove-*`, gateway restarted,
+  coordinator MCP env re-verified live); SOUL.md workspace conventions rewritten for the fleet/
+  layout (Layout bullet, fleet-scoped clone/scratch/pipeline-ownership paths).
