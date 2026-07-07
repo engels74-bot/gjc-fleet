@@ -5,7 +5,7 @@ sources:
   - ~/github/engels74-bot/gjc-bot-scripts/<stage>/*.sh (the pipeline spine; stage-dir layout)
   - ~/.clawhip/config.toml, ~/github/engels74/gjc/clawhip/src/sink/local_file.rs
   - ~/.hermes/config.yaml, ~/.hermes/cron/jobs.json, ~/.gjc-relay/src/main.rs
-  - ~/.repo-bot/*.log (live run evidence: mover-status#24 → PR #25; easyhdr#115 review handler ×2)
+  - ~/.gjc-bot/*.log (live run evidence: mover-status#24 → PR #25; easyhdr#115 review handler ×2)
 maintainer_notes: >
   Edit this file in isolation. Keep headings stable; append to Changelog at the bottom.
   This is the heart of the doc set — the end-to-end walk. Component internals belong on
@@ -22,7 +22,7 @@ maintainer_notes: >
 
 | Seam | Mechanism | Data format | Evidence |
 |---|---|---|---|
-| clawhip → gjc-bot | **Shared file**: appends to `~/.repo-bot/issue-spool.jsonl` (localfile sink); systemd `.path` unit fires on modify | JSONL, `content` leads with `<repo>#<n> opened: <title>` (compact, ≤240 chars) | `~/.clawhip/config.toml:29-33`; `clawhip src/sink/local_file.rs:75-81` |
+| clawhip → gjc-bot | **Shared file**: appends to `~/.gjc-bot/issue-spool.jsonl` (localfile sink); systemd `.path` unit fires on modify | JSONL, `content` leads with `<repo>#<n> opened: <title>` (compact, ≤240 chars) | `~/.clawhip/config.toml:29-33`; `clawhip src/sink/local_file.rs:75-81` |
 | gjc-bot → gjc | **Subprocess**: `timeout 1800 gjc -p --no-pty "@promptfile"` in a fresh worktree | Prompt file in; gjc's side effects (commits/PR) out; exit code | `gjc-bot-scripts/run/gjc-run.sh:130` |
 | gjc-bot → claude | **Subprocess**: `timeout 5400 claude -p --dangerously-skip-permissions --model opus < filled-prompt` in an isolated checkout | Filled markdown template in; PR mutations out | `gjc-bot-scripts/review/review-run.sh:101` |
 | gjc-bot → clawhip | **CLI → loopback HTTP**: `clawhip send` / `clawhip agent <state>` POST to the daemon on 127.0.0.1:25294 | Event JSON; `GJCEMBED1` envelope in message content | `run/gjc-run.sh:49-58`; `lib/discord-embed.sh:61` |
@@ -36,7 +36,7 @@ maintainer_notes: >
 | user → hermes | Discord DM / @mention → per-user session, auto-threads | chat | [20-hermes-agent.md](20-hermes-agent.md#the-gateway) |
 | augmentcode[bot] → gjc-bot | **Polling**: review-detector reads PR reviews via `gh api` | GitHub review objects | `review/review-detector.sh:47-49` |
 
-Shared state that crosses boundaries: the issue spool + ledgers + locks in `~/.repo-bot/`
+Shared state that crosses boundaries: the issue spool + ledgers + locks in `~/.gjc-bot/`
 ([50-configuration-and-state.md](50-configuration-and-state.md)), the worktrees next to each
 clone, the design system `~/.gjc-relay/design-system.json` (read by both the relay and
 `discord-embed.sh`), and `~/.hermes/.env` as the shared secret store.
@@ -48,7 +48,7 @@ they share only a *style* (design-system emoji taxonomy + SOUL.md voice).
 ## End-to-end: the life of a GitHub issue
 
 The scenario below is the real automated lane, and it has run live (evidence:
-`~/.repo-bot/gjc-run.log` shows `mover-status#24` producing PR #25 on 2026-07-06, with worktree
+`~/.gjc-bot/gjc-run.log` shows `mover-status#24` producing PR #25 on 2026-07-06, with worktree
 cleanup and a subsequent review-handler pass logged in `review.log`).
 
 ```mermaid
@@ -72,7 +72,7 @@ sequenceDiagram
     CH->>RL: POST channel message (per-repo channel)
     RL->>DC: rich embed "Issue #n opened — title" (github.issue-opened embed route, added 2026-07-07)
     CH->>CH: localfile sink route
-    Note over CH: appends JSONL record to ~/.repo-bot/issue-spool.jsonl
+    Note over CH: appends JSONL record to ~/.gjc-bot/issue-spool.jsonl
     SD->>AD: issue-spool-adapter.path fires on file modify
     AD->>AD: flock issues.lock; dedup vs issues.jsonl
     AD->>GH: gh api — re-fetch issue (skip PRs/closed)
@@ -189,3 +189,5 @@ Guild: "engels74's server". Channels (names only; numeric IDs live in the config
   seam tables and channel matrix; cross-links updated to `40-gjc-bot-automation.md`. Seam
   mechanics unchanged (repo paths inside `GH_ROOT` now resolve under
   `~/github/engels74-bot/fleet/`).
+- 2026-07-07 (state-dir rename) — Seam paths updated for the `~/.repo-bot` → `~/.gjc-bot`
+  rename (spool, ledgers, locks, logs). Seam mechanics unchanged.

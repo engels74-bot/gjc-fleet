@@ -113,7 +113,7 @@ A live route sends `github.issue-opened` to the **localfile sink**:
 ```toml
 # ~/.clawhip/config.toml:29-33
 [[routes]] event = "github.issue-opened"  sink = "localfile"
-local_path = "/home/cvps/.repo-bot/issue-spool.jsonl"  format = "compact"
+local_path = "/home/cvps/.gjc-bot/issue-spool.jsonl"  format = "compact"
 ```
 
 `src/sink/local_file.rs:75-81` appends one JSON object per line:
@@ -123,7 +123,7 @@ with whitelisted fields (`summarize_payload`, `local_file.rs:38-56`) and UTF-8-s
 truncation for the downstream parser (`issue-spool-adapter.sh` — see
 [40-gjc-bot-automation.md](40-gjc-bot-automation.md#issue-spool-adaptersh)).
 
-**Consumer side, verified live:** the spool path `/home/cvps/.repo-bot/issue-spool.jsonl` is watched
+**Consumer side, verified live:** the spool path `/home/cvps/.gjc-bot/issue-spool.jsonl` is watched
 by a systemd **path unit**, `issue-spool-adapter.path` (`PathModified=`, `Unit=issue-spool-adapter.service`,
 `WantedBy=paths.target`; live state `enabled`/`active`/`waiting`). Every append triggers the
 `issue-spool-adapter.service` oneshot, whose `ExecStart=` now points at
@@ -231,7 +231,7 @@ so the relay is up before clawhip sends. Note the in-repo `deploy/clawhip.servic
   in-repo clawhip source/docs reference the old `~/scripts/repo-bot` path (grepped `src/`,
   `SKILL.md`, `README.md` — clean), so no path fixes were needed inside this page's clawhip-source
   claims. Added the previously-undocumented consumer side of the issue spool: the live
-  `issue-spool-adapter.path` systemd path unit (`PathModified=/home/cvps/.repo-bot/issue-spool.jsonl`)
+  `issue-spool-adapter.path` systemd path unit (`PathModified=/home/cvps/.repo-bot/issue-spool.jsonl`, since renamed to `~/.gjc-bot`)
   that triggers `issue-spool-adapter.service`, whose `ExecStart=` now correctly points at
   `.../gjc-bot-scripts/intake/issue-spool-adapter.sh` (confirmed via `systemctl cat`, live and
   `enabled`/`active`/`waiting`). Tightened the DLQ/`discord.rs` line citations (retry loop, `MAX_ATTEMPTS
@@ -245,3 +245,6 @@ so the relay is up before clawhip sends. Note the in-repo `deploy/clawhip.servic
 - 2026-07-07 (fleet/ move + component rename) — repo-bot → **gjc-bot** terminology; the six
   `[[monitors.git.repos]] path` entries now point at `~/github/engels74-bot/fleet/<repo>`
   (config backed up as `.bak-fleetmove-*`, daemon restarted, polling re-verified live).
+- 2026-07-07 (state-dir rename) — The localfile sink now writes the issue spool to
+  `/home/cvps/.gjc-bot/issue-spool.jsonl` (`~/.repo-bot` → `~/.gjc-bot` rename; config backed up
+  as `.bak-gjcbotrename-*`, daemon restarted). Spool consumer path references updated.

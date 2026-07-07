@@ -3,7 +3,7 @@ status: verified         # draft | reviewed | verified
 last_verified: 2026-07-07
 sources:
   - /etc/systemd/system/ (live units, via systemctl cat/status)
-  - ~/.repo-bot/*.log, journalctl evidence gathered 2026-07-06
+  - ~/.gjc-bot/*.log, journalctl evidence gathered 2026-07-06
 maintainer_notes: >
   Edit this file in isolation. Keep headings stable; append to Changelog at the bottom.
   This page maps WHAT runs WHERE and owns the operating procedures — there is no separate runbook.
@@ -102,7 +102,7 @@ relocated `gjc-bot-scripts`) commit as the bot.
 | Where | What |
 |---|---|
 | `journalctl -u {hermes-gateway,clawhip,gjc-relay,gjc-dlq-watch}.service` | Daemon logs; relay logs `[transform] POST … kind=… -> <status>` lines; clawhip logs `clawhip dlq bury:` on lost sends |
-| `~/.repo-bot/{adapter,gjc-run,review,merge-gate,janitor}.log` | Per-lane pipeline logs |
+| `~/.gjc-bot/{adapter,gjc-run,review,merge-gate,janitor}.log` | Per-lane pipeline logs |
 | `~/.gjc/logs/gjc.YYYY-MM-DD.log` | gjc daily JSONL logs (+ hashed audit sidecar) |
 | `~/.hermes/cron/output/<job_id>/*.md` | Cron job run records; `ticker_heartbeat`/`ticker_last_success` for scheduler liveness (`hermes cron status`) |
 | `~/.hermes/gateway_state.json` | Live gateway/platform state |
@@ -161,3 +161,6 @@ teardown. Config waves additionally leave dated `.bak-*` files next to each edit
 - 2026-07-07 (fleet/ move + component rename) — Terminology only: repo-bot → **gjc-bot**;
   cross-links updated. The `~/.gitconfig` `includeIf "gitdir:/home/cvps/github/engels74-bot/"`
   prefix still covers the new `fleet/` subfolder, so the bot identity is unaffected (verified).
+- 2026-07-07 (state-dir rename) — Log-location table updated for the `~/.repo-bot` →
+  `~/.gjc-bot` rename; `issue-spool-adapter.path` reinstalled + `daemon-reload` (watches the
+  new spool path, verified fired-on-append).

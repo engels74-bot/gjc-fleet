@@ -24,14 +24,14 @@ maintainer_notes: >
 | **clawhip** | Rust event-to-Discord router: polls GitHub, receives CLI/HTTP events, routes to sinks; daemon on 127.0.0.1:25294. [30-clawhip.md](30-clawhip.md) |
 | **gjc-relay** | Locally-authored Rust loopback proxy on 127.0.0.1:25295 that rewrites clawhip's plain-text Discord REST calls into rich embeds. **Post-dated the earlier build-log (now retired), which never mentioned it.** [35-gjc-relay.md](35-gjc-relay.md) |
 | **relay (hermes sense)** | A hermes-native messaging *platform type* (`gateway/relay/`) — a WebSocket transport, **unrelated to gjc-relay**. Naming collision; always disambiguate |
-| **gjc-bot** | The shell glue layer sequencing issue → run → review → merge-gate. Lives in the `gjc-bot-scripts` repo (`~/github/engels74-bot/gjc-bot-scripts/`); the old `~/scripts/repo-bot/` path is dead. Formerly written "repo-bot" — the `~/.repo-bot` state dir and `REPO_BOT_*` env prefix keep the historical name. [40-gjc-bot-automation.md](40-gjc-bot-automation.md) |
-| **gjc-bot-scripts** | The repo holding the gjc-bot shell pipeline (renamed from `engels74-bot/gjc-bot` on 2026-07-07). Reorganized by pipeline stage: `intake/`, `run/`, `review/`, `maintenance/`, `lib/`, `systemd/`. Scripts self-locate their repo root via `SCRIPTS_DIR` (`REPO_BOT_SCRIPTS` override still honored). [40-gjc-bot-automation.md](40-gjc-bot-automation.md) |
+| **gjc-bot** | The shell glue layer sequencing issue → run → review → merge-gate. Lives in the `gjc-bot-scripts` repo (`~/github/engels74-bot/gjc-bot-scripts/`); the old `~/scripts/repo-bot/` path is dead. Formerly written "repo-bot"; the state dir and env prefix were renamed to match on 2026-07-07 (`~/.repo-bot` → `~/.gjc-bot`, `REPO_BOT_*` → `GJC_BOT_*`). [40-gjc-bot-automation.md](40-gjc-bot-automation.md) |
+| **gjc-bot-scripts** | The repo holding the gjc-bot shell pipeline (renamed from `engels74-bot/gjc-bot` on 2026-07-07). Reorganized by pipeline stage: `intake/`, `run/`, `review/`, `maintenance/`, `lib/`, `systemd/`. Scripts self-locate their repo root via `SCRIPTS_DIR` (`GJC_BOT_SCRIPTS` override still honored). [40-gjc-bot-automation.md](40-gjc-bot-automation.md) |
 | **stackman / server-script / gjc-server-tool** | The Textual TUI ops console (Python). Repo/dir renamed `engels74-bot/server-tool` → `engels74-bot/gjc-server-tool` on 2026-07-07 (`~/github/engels74-bot/gjc-server-tool/`); the Python package `server_script` and the `stackman`/`server-script` console entrypoints are unchanged. Not part of the automated pipeline. |
 | **fleet / fleet clone root** | `~/github/engels74-bot/fleet/` — the subfolder holding every pipeline-owned working copy (the six app clones, their `*.gajae-code-worktrees/` buckets, the `review/` checkouts) since 2026-07-07. The scripts' `GH_ROOT`, clawhip's `[[monitors.git.repos]] path`s, and hermes' `GJC_COORDINATOR_MCP_WORKDIR_ROOTS`/`terminal.cwd` all point here; the root of `~/github/engels74-bot/` holds only the bot's own `gjc-*` repos. |
 | **GJCEMBED1** | The delimiter-envelope prefix (`GJCEMBED1 key=value … :: tail`) that marks a message for embed rendering by gjc-relay |
 | **design system** | `~/.gjc-relay/design-system.json` — the single styling source (event kind → color/emoji/title) shared by the relay and `discord-embed.sh` |
 | **DLQ / bury** | clawhip's dead-letter queue: in-memory only; a "buried" notification is permanently lost. `gjc-dlq-watch` alarms on it |
-| **spool** | `~/.repo-bot/issue-spool.jsonl` — the JSONL queue clawhip writes `github.issue-opened` records to; the pipeline's inbox |
+| **spool** | `~/.gjc-bot/issue-spool.jsonl` — the JSONL queue clawhip writes `github.issue-opened` records to; the pipeline's inbox |
 | **merge gate** | Advisory, comment-only LLM verdict on CI-green bot PRs (`MERGE_READY`/`REQUEST_CHANGES`); never merges |
 | **the janitor / reap** | `gjc-worktree-janitor.sh` (crash-net for orphaned run worktrees) and `gjc-reap.sh` (manual tree-kill of a jammed run) |
 | **single-flight** | The `flock`-based one-run-at-a-time discipline per lane (`gjc.lock`, `review.lock`) |
@@ -75,8 +75,9 @@ own `gjc-*` repos. Re-pointed in the same wave: all eight scripts' `GH_ROOT` def
 `GJC_COORDINATOR_MCP_WORKDIR_ROOTS` + `terminal.cwd` + SOUL.md workspace conventions; the two git
 worktree link files were repaired to the new absolute paths, clawhip + hermes-gateway restarted,
 and all lanes re-verified live. The doc set simultaneously settled the component name **gjc-bot**
-(formerly written "repo-bot"; page 40 renamed accordingly, `~/.repo-bot` + `REPO_BOT_*` keep the
-historical on-disk name).
+(formerly written "repo-bot"; page 40 renamed accordingly — and the on-disk rename followed the
+same evening: `~/.gjc-bot` → `~/.gjc-bot`, `GJC_BOT_*` → `GJC_BOT_*`, the spool sink, path
+unit, and backup tooling re-pointed).
 
 ## Open questions
 
@@ -149,3 +150,6 @@ Highest-signal first. Per-page questions are also listed on each component page.
 - 2026-07-07 (fleet/ move + component rename) — Glossary: gjc-bot entry notes the historical
   "repo-bot" working name (kept by `~/.repo-bot` + `REPO_BOT_*`); new **fleet / fleet clone root**
   entry; new wave-timeline paragraph for the fleet/ move. Page-40 cross-links renamed.
+- 2026-07-07 (state-dir rename) — gjc-bot glossary entry and spool term updated: the on-disk
+  rename (`~/.repo-bot` → `~/.gjc-bot`, `REPO_BOT_*` → `GJC_BOT_*`) completed the gjc-bot
+  naming; wave-timeline paragraph amended accordingly.

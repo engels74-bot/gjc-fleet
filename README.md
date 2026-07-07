@@ -44,7 +44,7 @@ held the operational procedures and build history (Phases A–G) has been retire
 | hermes-agent | Discord "GJC Brain" + cron + kanban | `~/github/engels74/gjc/hermes-agent` | `~/.hermes` | `hermes-gateway.service` |
 | clawhip | Event → Discord router + GitHub poller | `~/github/engels74/gjc/clawhip` | `~/.clawhip` | `clawhip.service` (:25294) |
 | gjc-relay | Plain text → rich embed loopback proxy | `~/.gjc-relay/src` | `~/.gjc-relay` | `gjc-relay.service` (:25295) |
-| gjc-bot | issue → run → review → merge-gate glue | `~/github/engels74-bot/gjc-bot-scripts` | `~/.repo-bot` | systemd path/timers + hermes cron |
+| gjc-bot | issue → run → review → merge-gate glue | `~/github/engels74-bot/gjc-bot-scripts` | `~/.gjc-bot` | systemd path/timers + hermes cron |
 
 ```
 GitHub ──poll── clawhip ──spool──▶ gjc-bot ──runs──▶ gjc / claude ──PRs──▶ GitHub
@@ -100,3 +100,5 @@ GitHub ──poll── clawhip ──spool──▶ gjc-bot ──runs──▶
   **gjc-bot**; page 40 renamed to `40-gjc-bot-automation.md`. The six working clones, their
   worktree buckets, and `review/` moved into `~/github/engels74-bot/fleet/`; scripts, clawhip,
   and hermes configs re-pointed and re-verified live.
+- 2026-07-07 (state-dir rename) — `~/.repo-bot` → `~/.gjc-bot` and `REPO_BOT_*` → `GJC_BOT_*`
+  everywhere on disk; at-a-glance table updated.

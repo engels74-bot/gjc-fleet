@@ -7,7 +7,7 @@ sources:
   - /etc/systemd/system/ (installed copies of the gjc-bot units; ExecStart now points
     into gjc-bot-scripts/<stage>/)
   - ~/.hermes/scripts/ (real-file cron wrappers that exec the maintenance/ + intake/ scripts)
-  - ~/.repo-bot/ (ledgers, locks, logs — runtime evidence)
+  - ~/.gjc-bot/ (ledgers, locks, logs — runtime evidence)
 maintainer_notes: >
   Edit this file in isolation. Keep headings stable; append to Changelog at the bottom.
   Line citations refer to the scripts in gjc-bot-scripts/ as re-verified 2026-07-07
@@ -46,9 +46,9 @@ Two trigger fabrics drive it: **clawhip** (polls GitHub, emits events, writes th
 coding agent) and **headless `claude`** (the review handler); clawhip (through gjc-relay) is the
 Discord narration bus. Hermes participates only via two cron jobs (through real-file wrappers).
 
-Conventions used below: `STATE_DIR` = `~/.repo-bot` (the state dir and the `REPO_BOT_*` env-var
-prefix keep the component's historical "repo-bot" working name — on-disk identifiers were not
-renamed when the component name settled on **gjc-bot**), `GH_ROOT` = `~/github/engels74-bot/fleet`
+Conventions used below: `STATE_DIR` = `~/.gjc-bot` (renamed from `~/.repo-bot` on
+2026-07-07, together with the `GJC_BOT_*` → `GJC_BOT_*` env-prefix rename, so the on-disk
+identifiers now match the component name), `GH_ROOT` = `~/github/engels74-bot/fleet`
 (the **fleet clone root** — since the 2026-07-07 fleet/ move, all pipeline-owned working copies
 live in this subfolder, keeping the root of `~/github/engels74-bot/` to the bot's own `gjc-*`
 projects), `SCRIPTS_DIR` = the gjc-bot-scripts repo root, bot login = `engels74-bot`. The six
@@ -68,7 +68,7 @@ the glob (before the fleet/ move they were swept accidentally; see Open question
 GitHub issue opened
   │ clawhip git monitor (60 s poll)                       [30-clawhip.md]
   ├──► per-repo Discord channel (human notice)
-  └──► ~/.repo-bot/issue-spool.jsonl (localfile sink)
+  └──► ~/.gjc-bot/issue-spool.jsonl (localfile sink)
             │ systemd: issue-spool-adapter.path (on modify) + .timer (5 min backup)
             ▼
   issue-spool-adapter.sh ── parse → dedup ledger → gh re-fetch → LLM triage (no tools)
@@ -98,7 +98,7 @@ Cleanup lanes: gjc-worktree-janitor (2 min timer) · gjc-reap.sh (manual) ·
 
 ### intake/issue-spool-adapter.sh
 
-Trigger: `issue-spool-adapter.path` (PathModified on `~/.repo-bot/issue-spool.jsonl`) plus a 5-min
+Trigger: `issue-spool-adapter.path` (PathModified on `~/.gjc-bot/issue-spool.jsonl`) plus a 5-min
 backup timer. Holds a global exclusive `flock` on `issues.lock` for the whole pass
 (`intake/issue-spool-adapter.sh:75`), then re-reads the **entire spool** each run (self-correcting
 when path triggers coalesce). Per `github.issue-opened` line: parse the compact
@@ -235,11 +235,11 @@ default pointed at the now-missing `~/scripts/repo-bot`, which broke `issue-spoo
 because it could not source `lib/discord-embed.sh`):
 
 ```sh
-SCRIPTS_DIR="${REPO_BOT_SCRIPTS:-$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd)}"
+SCRIPTS_DIR="${GJC_BOT_SCRIPTS:-$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd)}"
 ```
 
 i.e. it walks up one level from the script's own resolved location (each script lives one stage-dir
-deep) to the repo root; `REPO_BOT_SCRIPTS` still overrides. Present in
+deep) to the repo root; `GJC_BOT_SCRIPTS` still overrides. Present in
 `intake/issue-spool-adapter.sh:20`, `run/gjc-run.sh:26`, `run/gjc-reap.sh:18`,
 `review/review-detector.sh:20`, `review/review-run.sh:14`. `review/merge-gate.sh` does not set
 `SCRIPTS_DIR` but reaches `lib/` via the equivalent inline `cd "$(dirname)/.." && pwd` (`:28`).
@@ -259,7 +259,7 @@ the new stage-dirs (verified 2026-07-07).
 
 | Unit / job | Type | Schedule / watch | Runs |
 |---|---|---|---|
-| `issue-spool-adapter.path` | systemd path | PathModified `~/.repo-bot/issue-spool.jsonl` | intake/issue-spool-adapter.sh |
+| `issue-spool-adapter.path` | systemd path | PathModified `~/.gjc-bot/issue-spool.jsonl` | intake/issue-spool-adapter.sh |
 | `issue-spool-adapter.timer` | systemd timer | boot+5 min, every 5 min (backup) | intake/issue-spool-adapter.sh |
 | `review-detector.timer` | systemd timer | boot+5 min, every 5 min | review/review-detector.sh |
 | `merge-gate.timer` | systemd timer | boot+10 min, every 10 min | review/merge-gate.sh |
@@ -297,8 +297,8 @@ exactly this unique-worktree + janitor + reap design (see
 
 ## Env & config surface
 
-Everything is overridable by env; defaults in the scripts. Key names: `REPO_BOT_STATE`,
-`REPO_BOT_SCRIPTS`, `REPO_BOT_GH_ROOT`, `REPO_BOT_GH_OWNER`, `REPO_BOT_LOGIN`, per-binary `*_BIN`
+Everything is overridable by env; defaults in the scripts. Key names: `GJC_BOT_STATE`,
+`GJC_BOT_SCRIPTS`, `GJC_BOT_GH_ROOT`, `GJC_BOT_GH_OWNER`, `GJC_BOT_LOGIN`, per-binary `*_BIN`
 overrides, `GJC_RUN_TIMEOUT`, `REVIEW_RUN_TIMEOUT`, `JANITOR_GRACE_SECONDS`, `STALE_BRANCH_DAYS`,
 `BRAIN_MODEL`, `NANOGPT_URL`, `REVIEW_MODEL_PRIMARY/FAST`, `HANDLER_TEMPLATE`, repo filters
 (`MERGE_GATE_REPOS`/`REVIEW_REPOS`/`TRIAGE_REPOS`), `*_CHANNEL` overrides, `DRY_RUN`.
@@ -308,7 +308,7 @@ at runtime from `~/.hermes/.env`. Discord channel IDs are hard-coded in the scri
 reproduced here; the channels are `#gjc-events`, `#gjc-approvals`, `#gjc-lab` — see
 [60-data-flow-and-integration.md](60-data-flow-and-integration.md#discord-topology)).
 
-State in `~/.repo-bot/`: locks (`gjc.lock`, `review.lock`, `issues.lock`, `merge-gate.lock`,
+State in `~/.gjc-bot/`: locks (`gjc.lock`, `review.lock`, `issues.lock`, `merge-gate.lock`,
 `reviews.lock`), ledgers (`issues.jsonl`, `reviews.jsonl`, `merge-gate.jsonl`), the spool
 (`issue-spool.jsonl`), logs (`adapter.log`, `gjc-run.log`, `review.log`, `merge-gate.log`,
 `janitor.log`).
@@ -414,3 +414,10 @@ State in `~/.repo-bot/`: locks (`gjc.lock`, `review.lock`, `issues.lock`, `merge
   hermes' `GJC_COORDINATOR_MCP_WORKDIR_ROOTS`/`terminal.cwd`/SOUL.md conventions updated to match;
   services restarted and re-verified live (janitor walks fleet/ paths, merge-gate clean, clawhip
   polling, coordinator MCP env confirmed). Glob-sweep open question resolved by the move.
+- 2026-07-07 (state-dir rename) — On-disk identifiers now match the component name:
+  `STATE_DIR` moved `~/.repo-bot` → `~/.gjc-bot` (ledgers/locks/logs intact) and every
+  `REPO_BOT_*` env override is now `GJC_BOT_*` (gjc-bot-scripts commit `11b32a7`);
+  `issue-spool-adapter.path` reinstalled watching the new spool path. Same commit fixed a stale
+  handler-template instruction that still sourced `lib/discord-embed.sh` from the dead
+  `~/scripts/repo-bot` path (Phase 8 embed block). Verified live: all four lanes ran clean, and
+  a spool append at the new path fired the path unit within seconds.
