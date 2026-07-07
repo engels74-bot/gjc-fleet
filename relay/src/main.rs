@@ -25,7 +25,8 @@ const ALLOWED_KEYS: [&str; 6] = ["kind", "repo", "status", "actor", "branch", "u
 fn main() {
     let bind = std::env::var("RELAY_BIND").unwrap_or_else(|_| "127.0.0.1:25295".to_string());
     let ds_path = std::env::var("RELAY_DESIGN_SYSTEM").unwrap_or_else(|_| {
-        let home = std::env::var("HOME").expect("gjc-relay: neither RELAY_DESIGN_SYSTEM nor HOME is set");
+        let home =
+            std::env::var("HOME").expect("gjc-relay: neither RELAY_DESIGN_SYSTEM nor HOME is set");
         format!("{home}/.gjc-relay/design-system.json")
     });
 
@@ -35,9 +36,8 @@ fn main() {
         .unwrap_or_else(|e| panic!("gjc-relay: design system is not valid JSON: {e}"));
     let ds = Arc::new(ds);
 
-    let upstream = Arc::new(
-        std::env::var("RELAY_UPSTREAM").unwrap_or_else(|_| DEFAULT_UPSTREAM.to_string()),
-    );
+    let upstream =
+        Arc::new(std::env::var("RELAY_UPSTREAM").unwrap_or_else(|_| DEFAULT_UPSTREAM.to_string()));
 
     // Diagnostic (default empty = inert): comma-separated channel ids for which the
     // relay returns a synthetic 429 instead of proxying. Lets the Phase-2 end-to-end
@@ -93,7 +93,11 @@ fn channel_of(path: &str) -> Option<&str> {
 fn handle(mut req: Request, ds: &Value, agent: &ureq::Agent, upstream: &str, force_429: &[String]) {
     let method = req.method().clone();
     let full_path = req.url().to_string();
-    let log_path = full_path.split('?').next().unwrap_or(&full_path).to_string();
+    let log_path = full_path
+        .split('?')
+        .next()
+        .unwrap_or(&full_path)
+        .to_string();
 
     // Local health endpoint — never proxied upstream.
     if method == Method::Get && (full_path == "/healthz" || full_path.starts_with("/healthz?")) {
@@ -135,7 +139,10 @@ fn handle(mut req: Request, ds: &Value, agent: &ureq::Agent, upstream: &str, for
                     r = r.with_header(h);
                 }
                 let _ = req.respond(r);
-                log_meta("force429", &format!("POST {} -> 429 (diagnostic)", log_path));
+                log_meta(
+                    "force429",
+                    &format!("POST {} -> 429 (diagnostic)", log_path),
+                );
                 return;
             }
         }
@@ -214,11 +221,20 @@ fn handle(mut req: Request, ds: &Value, agent: &ureq::Agent, upstream: &str, for
     let _ = req.respond(response);
 
     if kind_label.is_empty() {
-        log_meta("proxy", &format!("{} {} -> {}", method.as_str(), log_path, status));
+        log_meta(
+            "proxy",
+            &format!("{} {} -> {}", method.as_str(), log_path, status),
+        );
     } else {
         log_meta(
             "transform",
-            &format!("{} {} kind={} -> {}", method.as_str(), log_path, kind_label, status),
+            &format!(
+                "{} {} kind={} -> {}",
+                method.as_str(),
+                log_path,
+                kind_label,
+                status
+            ),
         );
     }
 }
@@ -269,7 +285,10 @@ fn transform_body(body: &[u8], ds: &Value) -> (Vec<u8>, Option<String>, String) 
         if !embeds.is_empty() {
             obj.insert("embeds".to_string(), json!(embeds));
             if !degraded.is_empty() {
-                obj.insert("content".to_string(), json!(cap(&degraded.join("\n"), 2000)));
+                obj.insert(
+                    "content".to_string(),
+                    json!(cap(&degraded.join("\n"), 2000)),
+                );
             }
             return (
                 serde_json::to_vec(&Value::Object(obj)).unwrap_or_else(|_| body.to_vec()),
@@ -331,7 +350,22 @@ fn build_embed(content: &str, ds: &Value) -> Result<(Value, String), ()> {
         let charset_ok = if key == "url" {
             val.chars().all(|c| {
                 c.is_ascii_alphanumeric()
-                    || matches!(c, '.' | '_' | ':' | '/' | '-' | '?' | '=' | '&' | '#' | '%' | '~' | '+' | ',' | '@')
+                    || matches!(
+                        c,
+                        '.' | '_'
+                            | ':'
+                            | '/'
+                            | '-'
+                            | '?'
+                            | '='
+                            | '&'
+                            | '#'
+                            | '%'
+                            | '~'
+                            | '+'
+                            | ','
+                            | '@'
+                    )
             })
         } else {
             val.chars()
@@ -352,8 +386,14 @@ fn build_embed(content: &str, ds: &Value) -> Result<(Value, String), ()> {
     let message = if is_lone_placeholder(tail) { "" } else { tail };
 
     let kinds = ds.get("kinds").ok_or(())?;
-    let entry = kinds.get(&kind).or_else(|| kinds.get("default")).ok_or(())?;
-    let color = entry.get("color").and_then(|c| c.as_i64()).unwrap_or(9_807_270);
+    let entry = kinds
+        .get(&kind)
+        .or_else(|| kinds.get("default"))
+        .ok_or(())?;
+    let color = entry
+        .get("color")
+        .and_then(|c| c.as_i64())
+        .unwrap_or(9_807_270);
     let title_tmpl = entry
         .get("title")
         .and_then(|t| t.as_str())
@@ -376,7 +416,12 @@ fn build_embed(content: &str, ds: &Value) -> Result<(Value, String), ()> {
     }
 
     let mut fields = Vec::new();
-    for (key, label) in [("repo", "Repo"), ("branch", "Branch"), ("actor", "Actor"), ("status", "Status")] {
+    for (key, label) in [
+        ("repo", "Repo"),
+        ("branch", "Branch"),
+        ("actor", "Actor"),
+        ("status", "Status"),
+    ] {
         if let Some((_, val)) = present.iter().find(|(k, _)| k == key) {
             fields.push(json!({ "name": label, "value": cap(val, 1024), "inline": true }));
         }
@@ -460,19 +505,41 @@ fn cap(s: &str, n: usize) -> String {
 
 fn embed_text_len(embed: &Value) -> usize {
     let mut total = 0;
-    let sget = |k: &str| embed.get(k).and_then(|v| v.as_str()).map(|s| s.chars().count()).unwrap_or(0);
+    let sget = |k: &str| {
+        embed
+            .get(k)
+            .and_then(|v| v.as_str())
+            .map(|s| s.chars().count())
+            .unwrap_or(0)
+    };
     total += sget("title");
     total += sget("description");
-    if let Some(f) = embed.get("footer").and_then(|f| f.get("text")).and_then(|t| t.as_str()) {
+    if let Some(f) = embed
+        .get("footer")
+        .and_then(|f| f.get("text"))
+        .and_then(|t| t.as_str())
+    {
         total += f.chars().count();
     }
-    if let Some(a) = embed.get("author").and_then(|a| a.get("name")).and_then(|t| t.as_str()) {
+    if let Some(a) = embed
+        .get("author")
+        .and_then(|a| a.get("name"))
+        .and_then(|t| t.as_str())
+    {
         total += a.chars().count();
     }
     if let Some(arr) = embed.get("fields").and_then(|f| f.as_array()) {
         for field in arr {
-            total += field.get("name").and_then(|v| v.as_str()).map(|s| s.chars().count()).unwrap_or(0);
-            total += field.get("value").and_then(|v| v.as_str()).map(|s| s.chars().count()).unwrap_or(0);
+            total += field
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.chars().count())
+                .unwrap_or(0);
+            total += field
+                .get("value")
+                .and_then(|v| v.as_str())
+                .map(|s| s.chars().count())
+                .unwrap_or(0);
         }
     }
     total
@@ -556,7 +623,10 @@ mod tests {
     #[test]
     fn channel_of_extracts_id() {
         assert_eq!(channel_of("/api/v10/channels/123/messages"), Some("123"));
-        assert_eq!(channel_of("/api/v10/channels/123/messages?wait=true"), Some("123"));
+        assert_eq!(
+            channel_of("/api/v10/channels/123/messages?wait=true"),
+            Some("123")
+        );
         assert_eq!(channel_of("/api/v10/gateway"), None);
     }
 
@@ -571,7 +641,12 @@ mod tests {
         assert_eq!(e["title"], "🚀 Agent started");
         assert_eq!(e["color"], 5793266);
         assert_eq!(e["description"], "picked up issue #42");
-        let names: Vec<&str> = e["fields"].as_array().unwrap().iter().map(|f| f["name"].as_str().unwrap()).collect();
+        let names: Vec<&str> = e["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["name"].as_str().unwrap())
+            .collect();
         assert!(names.contains(&"Repo") && names.contains(&"Actor"));
         assert_eq!(e["author"]["name"], "engels74/zondarr");
         assert!(e["footer"]["text"].as_str().unwrap().contains("Berlin"));
@@ -580,9 +655,21 @@ mod tests {
     #[test]
     fn absent_placeholder_field_is_omitted_and_lone_tail_is_empty() {
         // repo left as literal {project}, tail left as literal {summary}
-        let (e, _) = build_embed("GJCEMBED1 kind=agent.started actor=gjc-run repo={project} :: {summary}", &ds()).unwrap();
-        assert!(e.get("description").is_none(), "lone-placeholder tail must yield no description");
-        let names: Vec<&str> = e["fields"].as_array().unwrap().iter().map(|f| f["name"].as_str().unwrap()).collect();
+        let (e, _) = build_embed(
+            "GJCEMBED1 kind=agent.started actor=gjc-run repo={project} :: {summary}",
+            &ds(),
+        )
+        .unwrap();
+        assert!(
+            e.get("description").is_none(),
+            "lone-placeholder tail must yield no description"
+        );
+        let names: Vec<&str> = e["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["name"].as_str().unwrap())
+            .collect();
         assert!(!names.contains(&"Repo"), "absent repo must be omitted");
         assert!(names.contains(&"Actor"));
     }
@@ -629,7 +716,11 @@ mod tests {
         assert!(!out.contains("GJCEMBED1") && !out.contains("::") && !out.contains('='));
         // no usable tail -> drop leading key=value tokens, keep human words
         let out2 = clean_degrade("GJCEMBED1 repo=x/y status=open something happened");
-        assert!(!out2.contains("GJCEMBED1") && !out2.contains('=') && out2.contains("something happened"));
+        assert!(
+            !out2.contains("GJCEMBED1")
+                && !out2.contains('=')
+                && out2.contains("something happened")
+        );
     }
 
     #[test]
@@ -657,7 +748,10 @@ mod tests {
         let v: Value = serde_json::from_slice(&out).unwrap();
         assert!(v.get("content").is_none(), "content must be replaced");
         assert!(v["embeds"].as_array().is_some());
-        assert_eq!(v["message_reference"]["message_id"], "9", "unknown fields preserved");
+        assert_eq!(
+            v["message_reference"]["message_id"], "9",
+            "unknown fields preserved"
+        );
     }
 
     #[test]

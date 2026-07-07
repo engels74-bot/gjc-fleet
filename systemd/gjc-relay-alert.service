@@ -4,4 +4,5 @@ Documentation=file:{{FLEET_REPO}}/docs/35-gjc-relay.md
 
 [Service]
 Type=oneshot
+EnvironmentFile=-%h/.gjc-relay/relay.env
 ExecStart=%h/.gjc-relay/alert.sh

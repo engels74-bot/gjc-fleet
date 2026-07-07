@@ -1,0 +1,52 @@
+# CI for the gjc-fleet monorepo. Four jobs, one purpose: keep the
+# "stand it up fresh" path honest. render-check is the constraint-enforcement
+# job — it blocks route-semantics regressions (docs/45-fleet-config.md) and any
+# numeric Discord ID from ever landing in the repo.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck all fleet scripts
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q shellcheck
+          find pipeline relay/runtime render bootstrap -name '*.sh' -type f 2>/dev/null \
+            | xargs -r shellcheck --severity=warning
+
+  cargo:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: relay
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: relay
+      - run: cargo fmt --check
+      - run: cargo test --locked
+
+  render-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: render from fleet.toml.example + invariants
+        run: bash render/render.sh check
+
+  prek:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: run all prek hooks
+        run: |
+          pip install -q prek
+          SKIP=no-commit-to-branch prek run --all-files

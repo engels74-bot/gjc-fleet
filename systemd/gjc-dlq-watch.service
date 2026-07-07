@@ -5,6 +5,7 @@ After=clawhip.service
 
 [Service]
 Type=simple
+EnvironmentFile=-%h/.gjc-relay/relay.env
 ExecStart=%h/.gjc-relay/dlq-watch.sh
 Restart=always
 RestartSec=5
