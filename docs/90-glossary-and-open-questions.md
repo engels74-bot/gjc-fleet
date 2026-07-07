@@ -169,10 +169,11 @@ Highest-signal first. Per-page questions are also listed on each component page.
    systemd on Ubuntu ≥24.04. Verified live via a full cutover + DLQ drill, but the trade-off
    (weaker filesystem isolation for a in-path single point of failure) is a standing judgment
    call, not a fully closed question. ([35-gjc-relay.md](35-gjc-relay.md#open-questions))
-9. **Old system-level units: soak period and final removal** — the pre-2026-07-07 `/etc/systemd/
-   system/` units are disabled but intentionally left on disk for a 24–48 h soak plus a reboot
-   test before deletion (and the old repo checkouts renamed `*.retired`). Tracking item: confirm
-   the soak completed cleanly, then delete.
+9. **Old system-level units: ~~soak period and~~ final removal — DONE 2026-07-08** (operator
+   skipped the soak): all 13 `/etc/systemd/system/` fleet units + the clawhip drop-in dir
+   deleted, old checkouts renamed `*.retired`, fresh backup snapshot taken. **Residual: the
+   reboot test** — linger + user-unit boot-start has only been proven across a hot cutover, not
+   a real reboot. Confirm on the next host reboot (`bootstrap/verify.sh` afterwards).
    ([70-deployment-and-operations.md](70-deployment-and-operations.md#open-questions))
 10. Smaller items tracked on component pages: `gpu_cache.json` consumer (gjc);
     `verification_evidence.db` purpose (hermes); `~/.gjc-relay/.omc/` contents; slack sink usage
@@ -232,3 +233,7 @@ Highest-signal first. Per-page questions are also listed on each component page.
   #9 (old system-unit soak/removal tracking), renumbering the catch-all to #10 and adding the
   `EXA_API_KEY` rotation follow-up to it; resolved the hermes PR-115 cron-drift question in the
   same pass (job removed from `jobs.json`, cited from pages 20/70 rather than re-listed here).
+- 2026-07-08 (decommission pass) — OQ#9 resolved except its reboot-test residual: `/etc` fleet
+  units deleted, checkouts retired, snapshot taken; the hermes duplicate `terminal:` block was
+  also deduped (shadowed early block deleted, effective config unchanged — see
+  [20-hermes-agent.md](20-hermes-agent.md)).

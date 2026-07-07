@@ -177,11 +177,11 @@ the renderer does not own it. `gjc-fleet/systemd/hermes-gateway.service.ref` is 
 **non-installable reference copy** for diffing, marked `# REFERENCE ONLY — DO NOT INSTALL FROM
 HERE` in its header.
 
-**Old system-level units are disabled, not deleted.** The pre-migration units under
-`/etc/systemd/system/` were `disable`d as part of the cutover but are deliberately left on disk
-pending a 24–48 h soak period plus a reboot test, at which point they'll be removed for good;
-rollback during the soak window is simply re-enabling them. `render/render.sh doctor` and
-`~/scripts/backuprestore/restore.sh` are both dual-scope during this transitional period (see
+**Old system-level units: removed 2026-07-08.** The pre-migration units under
+`/etc/systemd/system/` were `disable`d at cutover and deleted the following day (operator skipped
+the planned soak); `/etc` now carries zero fleet units. The old repo checkouts were renamed
+`*.retired` in the same pass and a fresh backup snapshot taken. `render/render.sh doctor` and
+`~/scripts/backuprestore/restore.sh` remain dual-scope defensively (see
 [Backups & rollback](#backups--rollback)). Full service map:
 [70-deployment-and-operations.md](70-deployment-and-operations.md#service-map).
 
@@ -268,3 +268,5 @@ alongside the pre-existing system-scope listing.
   its dead `~/scripts/repo-bot` line is gone; `backup-now.sh` manifests consolidated to one
   `gjc-fleet`-repo listing plus a new user-unit listing. Verified live against the actual
   `render.sh`, unit files, and `backuprestore/` scripts on disk.
+- 2026-07-08 (decommission pass) — systemd section updated: `/etc` fleet units deleted, old
+  checkouts `*.retired`, fresh post-decommission snapshot. Tooling stays dual-scope defensively.

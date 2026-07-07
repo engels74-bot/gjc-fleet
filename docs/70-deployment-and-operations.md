@@ -49,11 +49,14 @@ Two host-level prerequisites this migration depends on:
   (`userctl()`/`userjournal()`) with an explicit `XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id
   -u)}"` fallback, and `~/.zshenv` now exports it for interactive shells.
 
-The pre-migration system-level units are **disabled but not deleted** — left on disk pending a
-24–48 h soak period plus a reboot test (confirming linger + user-unit boot-start actually works
-across a real reboot, not just a hot cutover) before final removal; rollback during the soak window
-is re-enabling them. `~/scripts/backuprestore/restore.sh` is dual-scope for exactly this
-transitional reason (see [50-configuration-and-state.md](50-configuration-and-state.md#backups--rollback)).
+The pre-migration system-level units were **removed on 2026-07-08** (operator's call to skip the
+planned 24–48 h soak): all 13 remaining `/etc/systemd/system/` fleet unit files plus the
+`clawhip.service.d/` drop-in dir deleted, `daemon-reload`ed, verified zero fleet leftovers in
+`/etc`. Rollback now means re-rendering from a pre-migration snapshot (or git history — the
+verbatim system units live in the repo's history at the import commit). One residual to confirm:
+the **reboot test** (linger + user-unit boot-start across a real reboot, not just the hot
+cutover) is still outstanding. `~/scripts/backuprestore/restore.sh` stays dual-scope defensively
+(see [50-configuration-and-state.md](50-configuration-and-state.md#backups--rollback)).
 
 **Source vs. runtime (a common misread).** The three upstream engines live as *reference-only*
 source checkouts under `~/github/engels74/gjc/` (`gajae-code`, `hermes-agent`, `clawhip` — upstream
@@ -271,3 +274,8 @@ no `clawhip dlq bury:` lines ([35-gjc-relay.md](35-gjc-relay.md#build--deploy)).
   hygiene done in the same session removed the self-scheduled `monitor-easyhdr-pr115-rustsec` cron
   job from `jobs.json` (resolving the cron-ticker open question's "three jobs" framing) and fixed a
   stale cron workdir via `hermes cron edit`.
+- 2026-07-08 (decommission pass) — The 13 disabled pre-migration `/etc/systemd/system` fleet
+  units + the clawhip drop-in dir were deleted (operator skipped the planned soak);
+  `daemon-reload`ed, verified zero fleet leftovers and zero stale-path refs in `/etc`. The
+  reboot test remains the one outstanding user-unit proof. Old checkouts renamed `*.retired`;
+  fresh backup snapshot taken (`20260708-000750`).
