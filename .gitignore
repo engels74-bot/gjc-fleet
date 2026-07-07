@@ -1,0 +1,31 @@
+# Secrets & environment — this repo is documentation only; no credentials belong here.
+# (Docs reference secret material by name/role only, never values.)
+.env
+.env.*
+*.env
+.envrc
+*.secret
+*.pem
+*.key
+id_rsa
+id_ed25519
+auth.json
+
+# Tooling / session state (e.g. oh-my-claudecode) written into the working dir.
+.omc/
+
+# Backups & scratch — never commit.
+*.bak
+*.bak-*
+*.orig
+*~
+*.tmp
+
+# Editor / IDE.
+.vscode/
+.idea/
+*.swp
+
+# OS cruft.
+.DS_Store
+Thumbs.db
