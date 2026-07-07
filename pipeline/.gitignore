@@ -1,0 +1,20 @@
+# Secrets — scripts read credentials from ~/.hermes/.env at runtime.
+# Never commit any environment/secret file.
+.env
+.env.*
+*.env
+.envrc
+*.secret
+
+# Backups & scratch — never commit.
+*.bak
+*.bak-*
+*.orig
+*~
+
+# Tooling / session state (e.g. oh-my-claudecode) written into the working dir.
+.omc/
+
+# OS cruft.
+.DS_Store
+Thumbs.db

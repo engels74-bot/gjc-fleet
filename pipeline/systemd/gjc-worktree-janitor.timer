@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the gjc worktree janitor every 2 minutes (crash-net)
+Documentation=file:/home/cvps/documentation/hermes-phase-g-plan.md
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=15s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

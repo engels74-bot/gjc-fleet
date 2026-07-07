@@ -1,0 +1,11 @@
+[Unit]
+Description=Advisory merge gate — post MERGE_READY/REQUEST_CHANGES on CI-green bot PRs (comment-only)
+Documentation=file:/home/cvps/documentation/hermes-phase-g-plan.md
+
+[Service]
+Type=oneshot
+User=cvps
+Environment=HOME=/home/cvps
+Environment=PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/cvps/github/engels74-bot/gjc-bot-scripts/review/merge-gate.sh
+Nice=15

@@ -1,0 +1,11 @@
+[Unit]
+Description=Backup retry for the issue-spool adapter (catches busy-requeued issues)
+Documentation=file:/home/cvps/documentation/hermes-phase-g-plan.md
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

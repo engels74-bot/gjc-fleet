@@ -1,0 +1,16 @@
+[Unit]
+Description=Process new clawhip issue-spool records -> Hermes issue-intake webhook
+Documentation=file:/home/cvps/documentation/hermes-phase-g-plan.md
+
+[Service]
+Type=oneshot
+User=cvps
+Environment=HOME=/home/cvps
+Environment=PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/cvps/github/engels74-bot/gjc-bot-scripts/intake/issue-spool-adapter.sh
+Nice=10
+# The adapter fire-and-forgets a detached `gjc-run.sh _exec` (the long gjc run).
+# Default KillMode=control-group would reap that whole cgroup when this oneshot's
+# main process exits, killing the run before it starts. KillMode=process kills
+# only the main process, leaving the setsid'd run alive to complete.
+KillMode=process

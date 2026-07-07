@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the advisory merge gate every 10 minutes
+Documentation=file:/home/cvps/documentation/hermes-phase-g-plan.md
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=10min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
