@@ -1,0 +1,16 @@
+# OMC per-repo session state (dev tooling, never source)
+.omc/
+
+# Rust build output (relay subcrate; git is the source history, binaries are deploy artifacts)
+/relay/target/
+
+# Renderer staging output (render.sh writes to ~/.gjc-bot/render-out/, but never commit any)
+render-out/
+
+# Dated inline backups from the pre-renderer era (forensic history lives on disk, not in git)
+*.bak-*
+
+# Runtime env files are rendered/host-local, never committed
+relay.env
+gjc-bot.env
+fleet.toml
