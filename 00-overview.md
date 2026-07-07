@@ -24,7 +24,7 @@ Three upstream source projects, one locally-authored component, and a shell glue
 | 1 | **gajae-code (`gjc`)** | Coding-agent harness that writes the actual fixes and opens PRs | Rust + TypeScript (Bun) | `~/github/engels74/gjc/gajae-code` | `~/.gjc` | On demand: `gjc-run.sh` (headless) or hermes via Coordinator MCP |
 | 2 | **hermes-agent** | Always-on Discord "GJC Brain": chat, cron scheduler, kanban; drives gjc via MCP | Python | `~/github/engels74/gjc/hermes-agent` | `~/.hermes` | `hermes-gateway.service` |
 | 3 | **clawhip** | Event-to-Discord notification router; polls GitHub, writes the issue spool | Rust | `~/github/engels74/gjc/clawhip` | `~/.clawhip` | `clawhip.service` (daemon on 127.0.0.1:25294) |
-| 4 | **gjc-relay** | Loopback proxy turning clawhip's plain-text Discord posts into styled embeds | Rust (local, ~710 lines) | `~/.gjc-relay/src` | `~/.gjc-relay` | `gjc-relay.service` (127.0.0.1:25295) |
+| 4 | **gjc-relay** | Loopback proxy turning clawhip's plain-text Discord posts into styled embeds | Rust (local, ~710 lines) | `~/github/engels74-bot/gjc-relay` | `~/.gjc-relay` | `gjc-relay.service` (127.0.0.1:25295) |
 | 5 | **gjc-bot** | Shell glue: issue → triage → gjc run → review → merge gate | Bash | `~/github/engels74-bot/gjc-bot-scripts` (pipeline-stage dirs: `intake/` `run/` `review/` `maintenance/` `lib/` `systemd/`) | `~/.gjc-bot` (state) | systemd path unit + timers, 2 hermes cron jobs |
 
 Also on the field: **`engels74-bot`** (the bot's GitHub identity), **`augmentcode[bot]`** (external
@@ -38,8 +38,9 @@ A common misread: the source checkouts are **not** where the services run. Two d
 areas, and a build/install step in between:
 
 - **`~/github/engels74-bot/` — the user's OWN `gjc-*` projects**: `gjc-bot-scripts` (the gjc-bot
-  shell glue), `gjc-server-tool` (the `stackman` ops console), and `gjc-architecture` (this doc
-  set). These commit as the `engels74-bot` identity. Its **`fleet/` subfolder** holds every
+  shell glue), `gjc-relay` (the locally-authored relay crate), `gjc-server-tool` (the `stackman`
+  ops console), and `gjc-architecture` (this doc set). These commit as the `engels74-bot`
+  identity. Its **`fleet/` subfolder** holds every
   pipeline-owned working copy — the six `engels74/*` app clones, their `*.gajae-code-worktrees/`
   buckets, and the isolated `review/` checkouts (moved there 2026-07-07; the scripts' `GH_ROOT`,
   clawhip's monitor paths, and hermes' workdir roots all point at `~/github/engels74-bot/fleet`).
@@ -57,15 +58,18 @@ deployed copy), and the units run from there:
 | gajae-code (`gjc`) | `~/github/engels74/gjc/gajae-code` | bun global package (`gajae-code`, v0.9.0) | `~/.bun/bin/gjc` |
 | hermes-agent | `~/github/engels74/gjc/hermes-agent` | separate deployed copy + editable venv under `~/.hermes/hermes-agent` (v0.18.0) | `~/.hermes/hermes-agent/venv/bin/python` (WorkingDirectory `~/.hermes`) |
 | clawhip | `~/github/engels74/gjc/clawhip` | `cargo install` from crates.io (v0.6.11) | `~/.cargo/bin/clawhip` |
-| gjc-relay | `~/.gjc-relay/src` (locally authored) | `cargo build` in place | `~/.gjc-relay/gjc-relay` |
+| gjc-relay | `~/github/engels74-bot/gjc-relay` (own repo, locally authored) | `cargo build --release` in the repo, binary copied over | `~/.gjc-relay/gjc-relay` |
 
 Pattern: the checkouts under `~/github/engels74/gjc/` are **reference source only** — read/diff
 them, but the running apps are installed independently via package managers (`cargo install` from
 crates.io, bun global) or a separate deployed copy (hermes), and updates arrive through those
-channels, not by rebuilding the checkout. Only the locally-authored **gjc-relay** is built directly
-from its own tree (`~/.gjc-relay/src`). The base toolchain (`gh`, `jq`, `tmux`, `python`) comes from
-linuxbrew; the fleet apps themselves are not brew formulae. The `~/.gjc`, `~/.hermes`, `~/.clawhip`
-dirs are config/state homes, not source trees.
+channels, not by rebuilding the checkout. The locally-authored **gjc-relay** follows the same
+source-repo → deployed-runtime pattern, except its source repo IS the user's own
+(`engels74-bot/gjc-relay`) and the "install channel" is a local `cargo build --release` + copy of
+the binary into `~/.gjc-relay/` (since 2026-07-07; it was previously built in place from an
+un-versioned `~/.gjc-relay/src`). The base toolchain (`gh`, `jq`, `tmux`, `python`) comes from
+linuxbrew; the fleet apps themselves are not brew formulae. The `~/.gjc`, `~/.hermes`,
+`~/.clawhip`, `~/.gjc-relay` dirs are config/state/runtime homes, not source trees.
 
 ## Topology
 
@@ -181,3 +185,10 @@ subscription (`gpt-5.5`). Timeline & staleness:
   `REPO_BOT_*` → `GJC_BOT_*` across all scripts, the spool path unit, clawhip's localfile sink,
   and the backup tooling; component table + topology diagram updated. Verified live end-to-end
   (path unit fired on a spool append at the new location).
+- 2026-07-07 (gjc-relay repo adoption) — gjc-relay's source moved into its own repo,
+  `engels74-bot/gjc-relay` at `~/github/engels74-bot/gjc-relay` (pushed). Component table row 4
+  Source cell updated; "Where each component lives and runs" reworked: the relay now follows the
+  same source-repo → deployed-runtime pattern as the rest (built locally with `cargo build
+  --release` rather than installed from a registry), and `~/.gjc-relay` is purely a runtime home —
+  the old "built directly from its own tree `~/.gjc-relay/src`" exception is gone. Verified live:
+  rebuilt from the repo (binary byte-identical), redeployed, canary embed rendered.

@@ -22,14 +22,14 @@ maintainer_notes: >
 | **GJC Brain** | The hermes Discord bot identity — the conversational brain the user talks to |
 | **GJC Clawhip** | The clawhip Discord bot identity — post-only notifier |
 | **clawhip** | Rust event-to-Discord router: polls GitHub, receives CLI/HTTP events, routes to sinks; daemon on 127.0.0.1:25294. [30-clawhip.md](30-clawhip.md) |
-| **gjc-relay** | Locally-authored Rust loopback proxy on 127.0.0.1:25295 that rewrites clawhip's plain-text Discord REST calls into rich embeds. **Post-dated the earlier build-log (now retired), which never mentioned it.** [35-gjc-relay.md](35-gjc-relay.md) |
+| **gjc-relay** | Locally-authored Rust loopback proxy on 127.0.0.1:25295 that rewrites clawhip's plain-text Discord REST calls into rich embeds. Source repo `engels74-bot/gjc-relay` (`~/github/engels74-bot/gjc-relay`, since 2026-07-07); runtime home `~/.gjc-relay`. **Post-dated the earlier build-log (now retired), which never mentioned it.** [35-gjc-relay.md](35-gjc-relay.md) |
 | **relay (hermes sense)** | A hermes-native messaging *platform type* (`gateway/relay/`) — a WebSocket transport, **unrelated to gjc-relay**. Naming collision; always disambiguate |
 | **gjc-bot** | The shell glue layer sequencing issue → run → review → merge-gate. Lives in the `gjc-bot-scripts` repo (`~/github/engels74-bot/gjc-bot-scripts/`); the old `~/scripts/repo-bot/` path is dead. Formerly written "repo-bot"; the state dir and env prefix were renamed to match on 2026-07-07 (`~/.repo-bot` → `~/.gjc-bot`, `REPO_BOT_*` → `GJC_BOT_*`). [40-gjc-bot-automation.md](40-gjc-bot-automation.md) |
 | **gjc-bot-scripts** | The repo holding the gjc-bot shell pipeline (renamed from `engels74-bot/gjc-bot` on 2026-07-07). Reorganized by pipeline stage: `intake/`, `run/`, `review/`, `maintenance/`, `lib/`, `systemd/`. Scripts self-locate their repo root via `SCRIPTS_DIR` (`GJC_BOT_SCRIPTS` override still honored). [40-gjc-bot-automation.md](40-gjc-bot-automation.md) |
 | **stackman / server-script / gjc-server-tool** | The Textual TUI ops console (Python). Repo/dir renamed `engels74-bot/server-tool` → `engels74-bot/gjc-server-tool` on 2026-07-07 (`~/github/engels74-bot/gjc-server-tool/`); the Python package `server_script` and the `stackman`/`server-script` console entrypoints are unchanged. Not part of the automated pipeline. |
 | **fleet / fleet clone root** | `~/github/engels74-bot/fleet/` — the subfolder holding every pipeline-owned working copy (the six app clones, their `*.gajae-code-worktrees/` buckets, the `review/` checkouts) since 2026-07-07. The scripts' `GH_ROOT`, clawhip's `[[monitors.git.repos]] path`s, and hermes' `GJC_COORDINATOR_MCP_WORKDIR_ROOTS`/`terminal.cwd` all point here; the root of `~/github/engels74-bot/` holds only the bot's own `gjc-*` repos. |
 | **GJCEMBED1** | The delimiter-envelope prefix (`GJCEMBED1 key=value … :: tail`) that marks a message for embed rendering by gjc-relay |
-| **design system** | `~/.gjc-relay/design-system.json` — the single styling source (event kind → color/emoji/title) shared by the relay and `discord-embed.sh` |
+| **design system** | `~/.gjc-relay/design-system.json` — the single styling source (event kind → color/emoji/title) shared by the relay and `discord-embed.sh`; live copy canonical, versioned as `runtime/design-system.json` in the gjc-relay repo |
 | **DLQ / bury** | clawhip's dead-letter queue: in-memory only; a "buried" notification is permanently lost. `gjc-dlq-watch` alarms on it |
 | **spool** | `~/.gjc-bot/issue-spool.jsonl` — the JSONL queue clawhip writes `github.issue-opened` records to; the pipeline's inbox |
 | **merge gate** | Advisory, comment-only LLM verdict on CI-green bot PRs (`MERGE_READY`/`REQUEST_CHANGES`); never merges |
@@ -78,6 +78,16 @@ and all lanes re-verified live. The doc set simultaneously settled the component
 (formerly written "repo-bot"; page 40 renamed accordingly — and the on-disk rename followed the
 same evening: `~/.gjc-bot` → `~/.gjc-bot`, `GJC_BOT_*` → `GJC_BOT_*`, the spool sink, path
 unit, and backup tooling re-pointed).
+
+**2026-07-07 gjc-relay repo adoption (no `.bak` markers — git is the history now).** The last
+un-versioned component gained a repo: the relay crate moved from `~/.gjc-relay/src` (built in
+place) into **`engels74-bot/gjc-relay`** at `~/github/engels74-bot/gjc-relay` (crate +
+`runtime/` copies of the authored runtime artifacts + README + prek.toml; pushed, public like its
+siblings). Rebuilt from the repo (17 tests, binary byte-identical to the deployed one),
+redeployed with a ~1 s restart, canary-verified in `#gjc-lab`; then
+`~/.gjc-relay/{src,Cargo.toml,Cargo.lock,target}`, the `.bak-embedbatch-*` files, and
+`~/.gjc-relay-build` were removed, leaving `~/.gjc-relay` a pure runtime home like
+`~/.clawhip`/`~/.hermes`. `backup-now.sh` gained a manifest line for the new repo.
 
 ## Open questions
 
@@ -153,3 +163,8 @@ Highest-signal first. Per-page questions are also listed on each component page.
 - 2026-07-07 (state-dir rename) — gjc-bot glossary entry and spool term updated: the on-disk
   rename (`~/.repo-bot` → `~/.gjc-bot`, `REPO_BOT_*` → `GJC_BOT_*`) completed the gjc-bot
   naming; wave-timeline paragraph amended accordingly.
+- 2026-07-07 (gjc-relay repo adoption) — gjc-relay glossary entry gained its source repo
+  (`engels74-bot/gjc-relay`); design-system entry notes the versioned `runtime/` copy (live copy
+  canonical). New wave-timeline paragraph for the repo adoption: crate moved out of the
+  un-versioned `~/.gjc-relay/src` into the pushed repo, rebuilt/redeployed/canary-verified, and
+  the runtime dir stripped to a pure runtime home.

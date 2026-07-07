@@ -29,8 +29,11 @@ remotes, not the user's own repos). The services do not run from those checkouts
 are not the build input: each app is installed independently — `gjc` as a bun global package
 (runs from `~/.bun/bin/gjc`), clawhip via `cargo install` from crates.io (`~/.cargo/bin/clawhip`),
 hermes as a separate deployed copy + editable venv under `~/.hermes/hermes-agent`
-(`~/.hermes/hermes-agent/venv/bin/python`). Only the locally-authored relay is built in place
-(`~/.gjc-relay/src` → `~/.gjc-relay/gjc-relay`). The base toolchain is linuxbrew; the fleet apps are
+(`~/.hermes/hermes-agent/venv/bin/python`). The locally-authored relay follows the same pattern
+with a local build as its install channel: `cargo build --release` in its own repo
+(`~/github/engels74-bot/gjc-relay`, since 2026-07-07) and the binary copied to
+`~/.gjc-relay/gjc-relay` (see [Relay deploy / rollback](#relay-deploy--rollback)).
+The base toolchain is linuxbrew; the fleet apps are
 not brew formulae. The `ExecStart=` paths in the Service map below are the authoritative runtime
 locations. See [00-overview.md](00-overview.md#where-each-component-lives-and-runs) for the full split.
 
@@ -119,6 +122,24 @@ components they monitor.
 teardown. Config waves additionally leave dated `.bak-*` files next to each edited file
 ([50-configuration-and-state.md](50-configuration-and-state.md#backups--rollback)).
 
+### Relay deploy / rollback
+
+gjc-relay is the one component deployed by a local build (its source repo is
+`~/github/engels74-bot/gjc-relay`; the unit file never changes):
+
+```sh
+cd ~/github/engels74-bot/gjc-relay
+cargo test && cargo build --release
+cp --remove-destination target/release/gjc-relay ~/.gjc-relay/gjc-relay
+sudo systemctl restart gjc-relay.service
+```
+
+Rollback is the same procedure from an earlier commit (`git checkout <rev> -- src/ Cargo.toml
+Cargo.lock`, or a worktree at `<rev>`), rebuild, copy, restart. The relay is in-path for all
+Discord notifications and clawhip has no send retry — keep the restart window short and verify:
+`systemctl is-active gjc-relay`, `curl 127.0.0.1:25295/healthz`, a `#gjc-lab` canary embed, no
+`clawhip dlq bury:` lines ([35-gjc-relay.md](35-gjc-relay.md#build--deploy)).
+
 > Historical note: an earlier hermes-stack build-log/runbook (a SESSION HANDOFF snapshot, the
 > Phase-G execution log, and the original phase-by-phase build plan) once held the procedures and
 > build history for this stack. It has been retired and deleted; this doc set is its successor and
@@ -164,3 +185,9 @@ teardown. Config waves additionally leave dated `.bak-*` files next to each edit
 - 2026-07-07 (state-dir rename) — Log-location table updated for the `~/.repo-bot` →
   `~/.gjc-bot` rename; `issue-spool-adapter.path` reinstalled + `daemon-reload` (watches the
   new spool path, verified fired-on-append).
+- 2026-07-07 (gjc-relay repo adoption) — "Source vs. runtime" note updated: the relay is no longer
+  "built in place" — it builds from its own repo `~/github/engels74-bot/gjc-relay` and the binary
+  is copied to `~/.gjc-relay/`. Added the "Relay deploy / rollback" procedure (build → test →
+  copy → restart → canary-verify). Executed live this session: 17 tests passed, repo-built binary
+  byte-identical to the deployed one, ~1 s restart window, `#gjc-lab` canary `-> 200`, no DLQ
+  burials, all relay-stack units active.

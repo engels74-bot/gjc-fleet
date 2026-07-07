@@ -43,7 +43,7 @@ held the operational procedures and build history (Phases A–G) has been retire
 | gajae-code (`gjc`) | Coding agent (fixes issues, opens PRs) | `~/github/engels74/gjc/gajae-code` | `~/.gjc` | on-demand subprocess |
 | hermes-agent | Discord "GJC Brain" + cron + kanban | `~/github/engels74/gjc/hermes-agent` | `~/.hermes` | `hermes-gateway.service` |
 | clawhip | Event → Discord router + GitHub poller | `~/github/engels74/gjc/clawhip` | `~/.clawhip` | `clawhip.service` (:25294) |
-| gjc-relay | Plain text → rich embed loopback proxy | `~/.gjc-relay/src` | `~/.gjc-relay` | `gjc-relay.service` (:25295) |
+| gjc-relay | Plain text → rich embed loopback proxy | `~/github/engels74-bot/gjc-relay` | `~/.gjc-relay` | `gjc-relay.service` (:25295) |
 | gjc-bot | issue → run → review → merge-gate glue | `~/github/engels74-bot/gjc-bot-scripts` | `~/.gjc-bot` | systemd path/timers + hermes cron |
 
 ```
@@ -102,3 +102,7 @@ GitHub ──poll── clawhip ──spool──▶ gjc-bot ──runs──▶
   and hermes configs re-pointed and re-verified live.
 - 2026-07-07 (state-dir rename) — `~/.repo-bot` → `~/.gjc-bot` and `REPO_BOT_*` → `GJC_BOT_*`
   everywhere on disk; at-a-glance table updated.
+- 2026-07-07 (gjc-relay repo adoption) — gjc-relay source moved from the un-versioned
+  `~/.gjc-relay/src` into its own pushed repo `engels74-bot/gjc-relay`
+  (`~/github/engels74-bot/gjc-relay`); at-a-glance table Source cell updated. `~/.gjc-relay` is
+  now purely the runtime home. Details: [35-gjc-relay.md](35-gjc-relay.md).

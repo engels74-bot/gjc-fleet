@@ -2,7 +2,8 @@
 status: draft            # draft | reviewed | verified
 last_verified: 2026-07-07
 sources:
-  - ~/.gjc-relay/ (src/main.rs, design-system.json, relay.env, dlq-watch.sh, alert.sh)
+  - ~/github/engels74-bot/gjc-relay/ (src/main.rs, Cargo.toml, runtime/)
+  - ~/.gjc-relay/ (deployed binary, design-system.json, relay.env, dlq-watch.sh, alert.sh)
   - /etc/systemd/system/{gjc-relay,gjc-dlq-watch,gjc-relay-alert}.service
   - /etc/systemd/system/clawhip.service.d/10-gjc-relay.conf
   - ~/.omc/plans/discord-unification-plan.md
@@ -23,7 +24,8 @@ maintainer_notes: >
 ## Purpose
 
 **gjc-relay** is a small, locally-authored Rust reverse proxy (v1.0.0, 708 lines,
-`~/.gjc-relay/src/main.rs`; deps `tiny_http` + `ureq` + `chrono`/`chrono-tz`) that sits **in-path**
+`src/main.rs` in the `engels74-bot/gjc-relay` repo at `~/github/engels74-bot/gjc-relay`;
+deps `tiny_http` + `ureq` + `chrono`/`chrono-tz`) that sits **in-path**
 between clawhip and Discord. clawhip's Discord payload is hardcoded to plain
 `{"content": "<string>"}` in its source, so fleet notifications could never be rich embeds without
 forking clawhip. The chosen fix ("Option A" in
@@ -37,17 +39,50 @@ it is a **reverse proxy that clawhip's outbound Discord REST traffic flows throu
 
 ## Structure
 
-Everything lives in `~/.gjc-relay/` (deliberately outside the three "protected" repos):
+Since 2026-07-07 the source lives in its own git repo, **`engels74-bot/gjc-relay`**
+(`~/github/engels74-bot/gjc-relay` — the same own-project root as `gjc-bot-scripts` and this doc
+set, committed/pushed as `engels74-bot`), and `~/.gjc-relay/` is purely the **runtime home**, the
+same source-repo → deployed-runtime pattern as `~/.clawhip`/`~/.hermes`. Before that, the crate
+lived un-versioned inside the runtime dir (`~/.gjc-relay/src`, built in place).
+
+Repo (`~/github/engels74-bot/gjc-relay/`):
+
+| Path | Role |
+|---|---|
+| `src/main.rs`, `Cargo.toml`, `Cargo.lock` | The crate (own crate `gjc-relay` 1.0.0, incl. the 17 unit tests) |
+| `runtime/` | Versioned copies of the authored runtime artifacts below (`design-system.json`, `dlq-watch.sh`, `alert.sh`, `check-kind-coverage.sh`). The live copies in `~/.gjc-relay/` stay canonical at runtime; the committed alert scripts carry **no** numeric channel-ID default (must come from `GJC_ALERT_CHANNEL` — no numeric Discord IDs in git) |
+| `README.md`, `prek.toml`, `.gitignore` | Deploy procedure + sibling-standard pre-commit hooks; `relay.env`, `target/`, and the binary are ignored |
+
+Runtime home (`~/.gjc-relay/`):
 
 | File | Role |
 |---|---|
-| `gjc-relay` (~1.8 MB ELF) | The compiled static binary the service runs |
-| `src/main.rs`, `Cargo.toml` | Source (own crate `gjc-relay` 1.0.0; build tree out-of-tree) |
+| `gjc-relay` (~1.8 MB ELF) | The compiled static binary the service runs (built from the repo, copied here) |
 | `design-system.json` | **Single source of truth** for embed styling: 23 `kind`s (22 event kinds + `default`) → color/emoji/title, timezone Europe/Berlin. Also read by gjc-bot's `lib/discord-embed.sh` (now `~/github/engels74-bot/gjc-bot-scripts/lib/discord-embed.sh`, post `gjc-bot`→`gjc-bot-scripts` reorg) so both emitters render identically |
 | `relay.env` | `RELAY_BIND=127.0.0.1:25295`, `RELAY_DESIGN_SYSTEM`. Header comment states it holds **no token** — the bot token arrives per-request in the forwarded `Authorization` header and is never stored |
 | `dlq-watch.sh` | Out-of-band DLQ-bury alarm (see below) |
 | `alert.sh` | `OnFailure` alarm for the relay itself |
 | `check-kind-coverage.sh` | Gate verifying design-system kind coverage |
+
+## Build → deploy
+
+From the repo checkout (the systemd unit needs **no** change on redeploy —
+`ExecStart=/home/cvps/.gjc-relay/gjc-relay`):
+
+```sh
+cd ~/github/engels74-bot/gjc-relay
+cargo test               # 17 unit tests
+cargo build --release    # opt-level=z, LTO, stripped → ~1.8 MB static binary
+cp --remove-destination target/release/gjc-relay ~/.gjc-relay/gjc-relay
+sudo systemctl restart gjc-relay.service
+```
+
+Keep the restart window short — the relay is in-path for every fleet Discord notification and
+clawhip DLQ-buries on transport failure with no retry. Post-deploy checks: `systemctl is-active
+gjc-relay`, `curl http://127.0.0.1:25295/healthz`, a canary embed through `discord_embed`/`clawhip
+send` into `#gjc-lab`, and `gjc-dlq-watch.service` still active with no `dlq bury` lines
+(the 2026-07-07 adoption deploy was verified exactly this way; the repo-built binary was
+byte-identical to the previously deployed one).
 
 ## How it works (the `GJCEMBED1` protocol)
 
@@ -170,3 +205,13 @@ Live journal evidence (2026-07-06): `[transform] POST …/messages kind=github.p
   has been deleted and this doc set is the single source of truth. No path now points at it.
 - 2026-07-07 (fleet/ move + component rename) — Terminology only: repo-bot → **gjc-bot**;
   cross-links updated to `40-gjc-bot-automation.md`. No relay behavior change.
+- 2026-07-07 (repo adoption) — Source moved under version control: new repo
+  **`engels74-bot/gjc-relay`** at `~/github/engels74-bot/gjc-relay` (pushed, public like its
+  siblings) holding the crate + `runtime/` copies of the authored runtime artifacts + README +
+  prek.toml. Structure section split into repo vs runtime home; new "Build → deploy" section.
+  Rebuilt from the repo (17 tests passed; binary byte-identical to the deployed one), redeployed,
+  and canary-verified end-to-end in `#gjc-lab` (`kind=agent.finished -> 200`, no DLQ burials).
+  `~/.gjc-relay/{src,Cargo.toml,Cargo.lock,target}`, the `.bak-embedbatch-*` files, and the stale
+  out-of-tree `~/.gjc-relay-build` cache removed — the runtime dir now holds only
+  binary + env + design-system + scripts. Committed alert scripts drop the numeric channel-ID
+  default (env-only, `GJC_ALERT_CHANNEL`); live copies in `~/.gjc-relay/` stay canonical.
