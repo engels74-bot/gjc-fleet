@@ -611,47 +611,89 @@ fn deliver_thread_create(
         });
         return;
     };
-    match api.create_thread_from_message(&op.channel_id, &anchor, token, &thread_name(op), 1440) {
-        Ok(thread_id) => match api.post_to_thread(&thread_id, token, &op.embed) {
-            Ok(_msg_id) => finish_delivery(
-                path,
-                op,
-                thread_id,
-                state,
-                now,
-                OpClass::ThreadCreate,
-                false,
-                events,
-            ),
-            Err(e) => bump_retry(&cfg.state_dir, path, op.clone(), now, e, events),
-        },
-        Err(DiscordErr::Status(404)) => {
-            // Source summary message is gone; there is nothing sane to branch
-            // a thread from. Disable threading for this item and bury.
-            {
-                let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
-                if let Some(item) = st.items.get_mut(&op.item_key) {
-                    item.thread_disabled = true;
+    // Reuse a thread created by an earlier attempt instead of creating a duplicate.
+    // If a prior tick's `create_thread_from_message` succeeded but the in-thread
+    // `post_to_thread` failed (or the process crashed in between), the op now carries
+    // the `target_thread_id`; skip creation and go straight to the post. Without this
+    // the whole ThreadCreate op was retried from scratch, orphaning the first thread
+    // and creating a second empty one (violates the no-duplicate guarantee).
+    let thread_id = match op.target_thread_id.clone() {
+        Some(existing) => existing,
+        None => {
+            match api.create_thread_from_message(
+                &op.channel_id,
+                &anchor,
+                token,
+                &thread_name(op),
+                1440,
+            ) {
+                Ok(tid) => {
+                    // Persist the created thread onto the op BEFORE the in-thread post,
+                    // so a post failure OR a crash mid-post reuses this thread on the
+                    // next tick rather than creating a duplicate.
+                    let mut with_thread = op.clone();
+                    with_thread.target_thread_id = Some(tid.clone());
+                    if let Err(e) = queue::record_attempt(path, &with_thread) {
+                        log_meta(
+                            "flush-error",
+                            &format!("record_attempt(thread_id) failed: {e}"),
+                        );
+                    }
+                    tid
+                }
+                Err(DiscordErr::Status(404)) => {
+                    // Source summary message is gone; there is nothing sane to branch
+                    // a thread from. Disable threading for this item and bury.
+                    {
+                        let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
+                        if let Some(item) = st.items.get_mut(&op.item_key) {
+                            item.thread_disabled = true;
+                        }
+                    }
+                    let _ =
+                        queue::bury(&cfg.state_dir, path, "source summary message missing (404)");
+                    events.push(FlushEvent::ThreadDisabled {
+                        item_key: op.item_key.clone(),
+                    });
+                    return;
+                }
+                Err(DiscordErr::Status(403)) => {
+                    {
+                        let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
+                        if let Some(item) = st.items.get_mut(&op.item_key) {
+                            item.thread_disabled = true;
+                        }
+                    }
+                    let _ = queue::bury(&cfg.state_dir, path, "403 forbidden");
+                    events.push(FlushEvent::ThreadDisabled {
+                        item_key: op.item_key.clone(),
+                    });
+                    return;
+                }
+                Err(e) => {
+                    bump_retry(&cfg.state_dir, path, op.clone(), now, e, events);
+                    return;
                 }
             }
-            let _ = queue::bury(&cfg.state_dir, path, "source summary message missing (404)");
-            events.push(FlushEvent::ThreadDisabled {
-                item_key: op.item_key.clone(),
-            });
         }
-        Err(DiscordErr::Status(403)) => {
-            {
-                let mut st = state.lock().unwrap_or_else(|e| e.into_inner());
-                if let Some(item) = st.items.get_mut(&op.item_key) {
-                    item.thread_disabled = true;
-                }
-            }
-            let _ = queue::bury(&cfg.state_dir, path, "403 forbidden");
-            events.push(FlushEvent::ThreadDisabled {
-                item_key: op.item_key.clone(),
-            });
+    };
+    match api.post_to_thread(&thread_id, token, &op.embed) {
+        Ok(_msg_id) => finish_delivery(
+            path,
+            op,
+            thread_id,
+            state,
+            now,
+            OpClass::ThreadCreate,
+            false,
+            events,
+        ),
+        // Retry the post against the existing thread, never a fresh create.
+        Err(e) => {
+            let mut retry = op.clone();
+            retry.target_thread_id = Some(thread_id);
+            bump_retry(&cfg.state_dir, path, retry, now, e, events);
         }
-        Err(e) => bump_retry(&cfg.state_dir, path, op.clone(), now, e, events),
     }
 }
 
@@ -915,6 +957,22 @@ mod tests {
         }
     }
 
+    fn thread_create_op(cid: &str, key: &str, anchor: &str, created_at: i64) -> Op {
+        Op {
+            channel_id: cid.to_string(),
+            item_key: key.to_string(),
+            kind: "workitem.dispatched".to_string(),
+            embed: json!({ "title": "thread body" }),
+            fingerprint: format!("thr-{created_at}"),
+            opclass: OpClass::ThreadCreate,
+            target_message_id: Some(anchor.to_string()),
+            target_thread_id: None,
+            created_at,
+            attempts: 0,
+            next_attempt_at: None,
+        }
+    }
+
     fn bucket() -> ChannelBucket {
         ChannelBucket::new(ManagedRate {
             managed_tokens: 3,
@@ -1158,6 +1216,83 @@ mod tests {
 
         let st = state.lock().unwrap();
         assert!(st.items[&key].thread_disabled);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn thread_create_post_failure_reuses_thread_no_duplicate() {
+        // P1 regression: create_thread_from_message succeeds but the in-thread
+        // post_to_thread fails; the retry must reuse the created thread, never
+        // create a second (orphaned) one.
+        let dir = temp_dir("threaddup");
+        let key = item_key("o/r", "1");
+        let state = Mutex::new({
+            let mut st = State::new();
+            st.learn(WorkItem::new(
+                key.clone(),
+                "chan".to_string(),
+                ItemType::Pr,
+                0,
+            ));
+            if let Some(it) = st.items.get_mut(&key) {
+                it.summary_message_id = Some("anchor1".to_string());
+            }
+            st
+        });
+        let clock = TestClock::new(1_000_000);
+        queue::enqueue(
+            &dir,
+            &thread_create_op("chan", &key, "anchor1", clock.now_ms()),
+        )
+        .unwrap();
+
+        let api = MockDiscord::new();
+        let b = bucket();
+        let c = cfg(&dir);
+
+        // Tick 1: create -> Ok("thread-xyz"), post -> rate-limited failure.
+        api.push_id_result(Ok("thread-xyz".to_string()));
+        api.push_id_result(Err(crate::discord::DiscordErr::RateLimited {
+            retry_after: 1.0,
+        }));
+        let _ = flush_tick(&state, &api, &clock, &b, Some("tok".to_string()), &c);
+        let creates_after_1 = api
+            .calls()
+            .iter()
+            .filter(|c| matches!(c, crate::discord::DiscordCall::CreateThread { .. }))
+            .count();
+        assert_eq!(
+            creates_after_1, 1,
+            "one thread created on the first attempt"
+        );
+
+        // Tick 2 (past the retry backoff): post -> Ok. Must NOT create a second thread.
+        api.push_id_result(Ok("posted-1".to_string()));
+        clock.advance(6_000);
+        let _ = flush_tick(&state, &api, &clock, &b, Some("tok".to_string()), &c);
+
+        let calls = api.calls();
+        let creates = calls
+            .iter()
+            .filter(|c| matches!(c, crate::discord::DiscordCall::CreateThread { .. }))
+            .count();
+        let posts = calls
+            .iter()
+            .filter(|c| matches!(c, crate::discord::DiscordCall::PostToThread { thread_id, .. } if thread_id == "thread-xyz"))
+            .count();
+        assert_eq!(
+            creates, 1,
+            "no duplicate thread: create_thread called exactly once across the retry"
+        );
+        assert_eq!(
+            posts, 2,
+            "both post attempts targeted the same existing thread"
+        );
+
+        // The item recorded the created thread id (registration survives the retry).
+        let st = state.lock().unwrap();
+        assert_eq!(st.items[&key].thread_id.as_deref(), Some("thread-xyz"));
+        drop(st);
         cleanup(&dir);
     }
 
