@@ -317,9 +317,10 @@ mod tests {
     fn parse_envelope_prefers_t64_title() {
         let title = "Add retry to the poller";
         let t64 = URL_SAFE_NO_PAD.encode(title.as_bytes());
-        let env =
-            parse_envelope(&format!("GJCEMBED1 kind=github.issue-opened number=7 t64={t64} :: tail"))
-                .unwrap();
+        let env = parse_envelope(&format!(
+            "GJCEMBED1 kind=github.issue-opened number=7 t64={t64} :: tail"
+        ))
+        .unwrap();
         assert_eq!(env.title.as_deref(), Some(title));
         assert_eq!(env.message, "tail");
         assert_eq!(env.number, "7");

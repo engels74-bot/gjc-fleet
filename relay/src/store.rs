@@ -241,7 +241,8 @@ mod tests {
         let mut st = State::new();
         // one expired, one fresh relative to now
         let now = now_ts();
-        st.dedup.insert("stale".to_string(), now - DEDUP_TTL_SECS - 10);
+        st.dedup
+            .insert("stale".to_string(), now - DEDUP_TTL_SECS - 10);
         st.dedup.insert("fresh".to_string(), now);
         save(&dir, &st).unwrap();
 

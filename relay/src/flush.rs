@@ -83,12 +83,20 @@ pub(crate) enum FlushEvent {
         item_key: String,
         new_id: String,
     },
-    RateLimited { retry_after_ms: i64 },
-    Backoff { attempts: u32 },
+    RateLimited {
+        retry_after_ms: i64,
+    },
+    Backoff {
+        attempts: u32,
+    },
     /// Already journaled with the `[dead-letter]` label by `queue::bury` at
     /// the point of occurrence — carried here only so tests can assert on it.
-    Buried { reason: String },
-    ThreadDisabled { item_key: String },
+    Buried {
+        reason: String,
+    },
+    ThreadDisabled {
+        item_key: String,
+    },
     Parked,
 }
 
@@ -320,7 +328,8 @@ pub(crate) fn flush_tick(
 
         if now - first_ts >= max_age_ms {
             for (path, _) in &group {
-                if let Err(e) = queue::bury(&cfg.state_dir, path, "delivery_max_age_secs exceeded") {
+                if let Err(e) = queue::bury(&cfg.state_dir, path, "delivery_max_age_secs exceeded")
+                {
                     log_meta("flush-error", &format!("bury failed: {e}"));
                 }
             }
@@ -345,7 +354,11 @@ pub(crate) fn flush_tick(
             // Should never happen (EditSummary always carries a target); bury
             // defensively rather than looping forever.
             for (path, _) in &group {
-                let _ = queue::bury(&cfg.state_dir, path, "EditSummary missing target_message_id");
+                let _ = queue::bury(
+                    &cfg.state_dir,
+                    path,
+                    "EditSummary missing target_message_id",
+                );
             }
             continue;
         };
@@ -405,7 +418,14 @@ pub(crate) fn flush_tick(
                         });
                     }
                     Err(_) => {
-                        bump_retry(&cfg.state_dir, &winner_path, winner.clone(), now, DiscordErr::Status(404), &mut events);
+                        bump_retry(
+                            &cfg.state_dir,
+                            &winner_path,
+                            winner.clone(),
+                            now,
+                            DiscordErr::Status(404),
+                            &mut events,
+                        );
                     }
                 }
             }
@@ -418,7 +438,14 @@ pub(crate) fn flush_tick(
                 });
             }
             Err(e) => {
-                bump_retry(&cfg.state_dir, &winner_path, winner.clone(), now, e, &mut events);
+                bump_retry(
+                    &cfg.state_dir,
+                    &winner_path,
+                    winner.clone(),
+                    now,
+                    e,
+                    &mut events,
+                );
             }
         }
     }
@@ -442,11 +469,15 @@ pub(crate) fn flush_tick(
         }
 
         match op.opclass {
-            OpClass::NewMessage => deliver_new_message(&path, &op, api, &token, state, cfg, now, &mut events),
+            OpClass::NewMessage => {
+                deliver_new_message(&path, &op, api, &token, state, cfg, now, &mut events)
+            }
             OpClass::ThreadCreate => {
                 deliver_thread_create(&path, &op, api, &token, state, cfg, now, &mut events)
             }
-            OpClass::ThreadPost => deliver_thread_post(&path, &op, api, &token, state, cfg, now, &mut events),
+            OpClass::ThreadPost => {
+                deliver_thread_post(&path, &op, api, &token, state, cfg, now, &mut events)
+            }
             OpClass::EditSummary => unreachable!("EditSummary ops are grouped above"),
         }
     }
@@ -570,7 +601,11 @@ fn deliver_thread_create(
     events: &mut Vec<FlushEvent>,
 ) {
     let Some(anchor) = op.target_message_id.clone() else {
-        let _ = queue::bury(&cfg.state_dir, path, "ThreadCreate missing target_message_id");
+        let _ = queue::bury(
+            &cfg.state_dir,
+            path,
+            "ThreadCreate missing target_message_id",
+        );
         events.push(FlushEvent::Buried {
             reason: "ThreadCreate missing target_message_id".to_string(),
         });
@@ -709,7 +744,9 @@ fn str_field<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
 }
 
 fn nested_str_field<'a>(v: &'a Value, obj_key: &str, field_key: &str) -> Option<&'a str> {
-    v.get(obj_key).and_then(|o| o.get(field_key)).and_then(|f| f.as_str())
+    v.get(obj_key)
+        .and_then(|o| o.get(field_key))
+        .and_then(|f| f.as_str())
 }
 
 fn embed_fields(v: &Value) -> Vec<(&str, &str)> {
@@ -891,7 +928,12 @@ mod tests {
         let key = item_key("o/r", "1");
         {
             let mut st = State::new();
-            st.learn(WorkItem::new(key.clone(), "chan".to_string(), ItemType::Pr, 0));
+            st.learn(WorkItem::new(
+                key.clone(),
+                "chan".to_string(),
+                ItemType::Pr,
+                0,
+            ));
             if let Some(it) = st.items.get_mut(&key) {
                 it.summary_message_id = Some("mid1".to_string());
             }
@@ -901,11 +943,23 @@ mod tests {
 
         let clock = TestClock::new(1_000_000);
         // 3 edit events land within the debounce window.
-        queue::enqueue(&dir, &edit_op("chan", &key, "mid1", clock.now_ms(), json!({"v":1}))).unwrap();
+        queue::enqueue(
+            &dir,
+            &edit_op("chan", &key, "mid1", clock.now_ms(), json!({"v":1})),
+        )
+        .unwrap();
         clock.advance(500);
-        queue::enqueue(&dir, &edit_op("chan", &key, "mid1", clock.now_ms(), json!({"v":2}))).unwrap();
+        queue::enqueue(
+            &dir,
+            &edit_op("chan", &key, "mid1", clock.now_ms(), json!({"v":2})),
+        )
+        .unwrap();
         clock.advance(500);
-        queue::enqueue(&dir, &edit_op("chan", &key, "mid1", clock.now_ms(), json!({"v":3}))).unwrap();
+        queue::enqueue(
+            &dir,
+            &edit_op("chan", &key, "mid1", clock.now_ms(), json!({"v":3})),
+        )
+        .unwrap();
 
         let api = MockDiscord::new();
         let b = bucket();
@@ -913,7 +967,9 @@ mod tests {
 
         // Not yet quiet: tick immediately should not deliver.
         let ev = flush_tick(&state, &api, &clock, &b, Some("tok".to_string()), &c);
-        assert!(ev.iter().all(|e| !matches!(e, FlushEvent::Delivered { .. })));
+        assert!(ev
+            .iter()
+            .all(|e| !matches!(e, FlushEvent::Delivered { .. })));
         assert_eq!(api.calls().len(), 0);
 
         // Advance past the quiet window (5s) since the LAST event.
@@ -942,26 +998,39 @@ mod tests {
         queue::enqueue(&dir, &new_msg_op("chan", "o/r#1", 1000)).unwrap();
 
         let api = MockDiscord::new();
-        api.push_id_result(Err(crate::discord::DiscordErr::RateLimited { retry_after: 2.0 }));
+        api.push_id_result(Err(crate::discord::DiscordErr::RateLimited {
+            retry_after: 2.0,
+        }));
         let clock = TestClock::new(1000);
         let b = bucket();
         let c = cfg(&dir);
 
         let ev = flush_tick(&state, &api, &clock, &b, Some("tok".to_string()), &c);
-        assert!(ev.iter().any(|e| matches!(e, FlushEvent::RateLimited { retry_after_ms } if *retry_after_ms == 2000)));
+        assert!(ev.iter().any(
+            |e| matches!(e, FlushEvent::RateLimited { retry_after_ms } if *retry_after_ms == 2000)
+        ));
 
         // Immediately retrying (same tick timestamp) must NOT re-attempt.
         let ev2 = flush_tick(&state, &api, &clock, &b, Some("tok".to_string()), &c);
-        assert!(ev2.iter().all(|e| !matches!(e, FlushEvent::RateLimited { .. } | FlushEvent::Delivered { .. })));
+        assert!(ev2.iter().all(|e| !matches!(
+            e,
+            FlushEvent::RateLimited { .. } | FlushEvent::Delivered { .. }
+        )));
         // 2 = the first tick's read-back list_recent_messages + post_message;
         // the second tick must add nothing (gated by next_attempt_at).
-        assert_eq!(api.calls().len(), 2, "no re-attempt before retry_after elapses");
+        assert_eq!(
+            api.calls().len(),
+            2,
+            "no re-attempt before retry_after elapses"
+        );
 
         // After the retry_after window, delivery is attempted again and succeeds.
         clock.advance(2100);
         api.push_id_result(Ok("777".to_string()));
         let ev3 = flush_tick(&state, &api, &clock, &b, Some("tok".to_string()), &c);
-        assert!(ev3.iter().any(|e| matches!(e, FlushEvent::Delivered { .. })));
+        assert!(ev3
+            .iter()
+            .any(|e| matches!(e, FlushEvent::Delivered { .. })));
         cleanup(&dir);
     }
 
@@ -978,12 +1047,16 @@ mod tests {
         let c = cfg(&dir);
 
         let ev = flush_tick(&state, &api, &clock, &b, Some("tok".to_string()), &c);
-        assert!(ev.iter().any(|e| matches!(e, FlushEvent::Backoff { attempts: 1 })));
+        assert!(ev
+            .iter()
+            .any(|e| matches!(e, FlushEvent::Backoff { attempts: 1 })));
 
         // Not enough time elapsed -> no retry yet.
         clock.advance(500);
         let ev2 = flush_tick(&state, &api, &clock, &b, Some("tok".to_string()), &c);
-        assert!(ev2.iter().all(|e| !matches!(e, FlushEvent::Delivered { .. })));
+        assert!(ev2
+            .iter()
+            .all(|e| !matches!(e, FlushEvent::Delivered { .. })));
         // 2 = the first tick's read-back list_recent_messages + post_message;
         // the second tick must add nothing (gated by next_attempt_at).
         assert_eq!(api.calls().len(), 2);
@@ -992,7 +1065,9 @@ mod tests {
         clock.advance(600);
         api.push_id_result(Ok("888".to_string()));
         let ev3 = flush_tick(&state, &api, &clock, &b, Some("tok".to_string()), &c);
-        assert!(ev3.iter().any(|e| matches!(e, FlushEvent::Delivered { .. })));
+        assert!(ev3
+            .iter()
+            .any(|e| matches!(e, FlushEvent::Delivered { .. })));
         cleanup(&dir);
     }
 
@@ -1002,13 +1077,22 @@ mod tests {
         let key = item_key("o/r", "1");
         let state = Mutex::new({
             let mut st = State::new();
-            st.learn(WorkItem::new(key.clone(), "chan".to_string(), ItemType::Pr, 0));
+            st.learn(WorkItem::new(
+                key.clone(),
+                "chan".to_string(),
+                ItemType::Pr,
+                0,
+            ));
             if let Some(it) = st.items.get_mut(&key) {
                 it.summary_message_id = Some("dead-mid".to_string());
             }
             st
         });
-        queue::enqueue(&dir, &edit_op("chan", &key, "dead-mid", 1000, json!({"v":1}))).unwrap();
+        queue::enqueue(
+            &dir,
+            &edit_op("chan", &key, "dead-mid", 1000, json!({"v":1})),
+        )
+        .unwrap();
 
         let api = MockDiscord::new();
         api.push_edit_result(Err(crate::discord::DiscordErr::Status(404)));
@@ -1035,7 +1119,12 @@ mod tests {
         let key = item_key("o/r", "1");
         let state = Mutex::new({
             let mut st = State::new();
-            st.learn(WorkItem::new(key.clone(), "chan".to_string(), ItemType::Pr, 0));
+            st.learn(WorkItem::new(
+                key.clone(),
+                "chan".to_string(),
+                ItemType::Pr,
+                0,
+            ));
             if let Some(it) = st.items.get_mut(&key) {
                 it.thread_id = Some("thread1".to_string());
             }
@@ -1082,7 +1171,12 @@ mod tests {
         let key = item_key("o/r", "1");
         let state = Mutex::new({
             let mut st = State::new();
-            st.learn(WorkItem::new(key.clone(), "chan".to_string(), ItemType::Issue, 0));
+            st.learn(WorkItem::new(
+                key.clone(),
+                "chan".to_string(),
+                ItemType::Issue,
+                0,
+            ));
             st
         });
         let op = {
@@ -1110,7 +1204,10 @@ mod tests {
         let mut discord_normalized = op.embed.clone();
         let obj = discord_normalized.as_object_mut().unwrap();
         obj.insert("type".to_string(), json!("rich"));
-        obj.insert("reference_id".to_string(), json!("some-internal-discord-id"));
+        obj.insert(
+            "reference_id".to_string(),
+            json!("some-internal-discord-id"),
+        );
         obj.insert(
             "thumbnail".to_string(),
             json!({"proxy_url": "https://images-ext.discordapp.net/x", "width": 1, "height": 1}),
@@ -1141,11 +1238,15 @@ mod tests {
 
         let calls = api.calls();
         assert!(
-            calls.iter().any(|c| matches!(c, crate::discord::DiscordCall::ListMessages { .. })),
+            calls
+                .iter()
+                .any(|c| matches!(c, crate::discord::DiscordCall::ListMessages { .. })),
             "must perform the read-back GET"
         );
         assert!(
-            !calls.iter().any(|c| matches!(c, crate::discord::DiscordCall::PostMessage { .. })),
+            !calls
+                .iter()
+                .any(|c| matches!(c, crate::discord::DiscordCall::PostMessage { .. })),
             "a matched read-back must NOT re-POST"
         );
 
@@ -1244,7 +1345,10 @@ mod tests {
                     item_key: key.clone(),
                     id: "already-there".to_string(),
                 },
-                Some(("recover", "o/r#1 -> already-there (read-back match, no re-post)")),
+                Some((
+                    "recover",
+                    "o/r#1 -> already-there (read-back match, no re-post)",
+                )),
             ),
             (
                 FlushEvent::Recreated {
@@ -1255,8 +1359,18 @@ mod tests {
                 Some(("recreate", "o/r#1 -> fresh-mid")),
             ),
             // Not in the flush-owned label set: journaled elsewhere or no label.
-            (FlushEvent::Buried { reason: "x".to_string() }, None),
-            (FlushEvent::ThreadDisabled { item_key: key.clone() }, None),
+            (
+                FlushEvent::Buried {
+                    reason: "x".to_string(),
+                },
+                None,
+            ),
+            (
+                FlushEvent::ThreadDisabled {
+                    item_key: key.clone(),
+                },
+                None,
+            ),
             (FlushEvent::RateLimited { retry_after_ms: 1 }, None),
             (FlushEvent::Backoff { attempts: 1 }, None),
             (FlushEvent::Parked, None),
@@ -1303,7 +1417,10 @@ mod tests {
             let (_, msg) = label_and_message(event).unwrap();
             let lower = msg.to_ascii_lowercase();
             for forbidden in ["token", "bearer", "authorization", "embed", "content"] {
-                assert!(!lower.contains(forbidden), "msg={msg:?} leaked {forbidden:?}");
+                assert!(
+                    !lower.contains(forbidden),
+                    "msg={msg:?} leaked {forbidden:?}"
+                );
             }
         }
     }

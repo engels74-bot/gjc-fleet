@@ -181,9 +181,21 @@ pub(crate) fn build_embed_from_envelope(env: &Envelope, ds: &Value) -> Value {
     if !(env.passed.is_empty() && env.failed.is_empty() && env.total.is_empty()) {
         let summary = format!(
             "{}/{} passed ({} failed)",
-            if env.passed.is_empty() { "?" } else { &env.passed },
-            if env.total.is_empty() { "?" } else { &env.total },
-            if env.failed.is_empty() { "?" } else { &env.failed },
+            if env.passed.is_empty() {
+                "?"
+            } else {
+                &env.passed
+            },
+            if env.total.is_empty() {
+                "?"
+            } else {
+                &env.total
+            },
+            if env.failed.is_empty() {
+                "?"
+            } else {
+                &env.failed
+            },
         );
         fields.push(json!({ "name": "Tests", "value": cap(&summary, 1024), "inline": true }));
     }

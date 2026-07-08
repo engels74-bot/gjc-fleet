@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 use tiny_http::{Header, Method, Request, Response};
 
 use crate::config::Config;
-use crate::envelope::{self, Envelope, cap, clean_degrade, MAGIC};
+use crate::envelope::{self, cap, clean_degrade, Envelope, MAGIC};
 use crate::flush::ChannelBucket;
 use crate::log::log_meta;
 use crate::policy::{self, Surface};
@@ -112,7 +112,10 @@ pub(crate) fn handle(
     // never logged/written to disk). Purely a side effect: it never changes
     // what is returned to the caller, so it cannot break v1 byte-identity.
     if method == Method::Post {
-        if let Some((_, v)) = fwd_headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("authorization")) {
+        if let Some((_, v)) = fwd_headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("authorization"))
+        {
             managed.token_cache.set(v.clone());
         }
     }
@@ -166,9 +169,10 @@ pub(crate) fn handle(
                                 }
                                 let cid_owned = cid.to_string();
                                 let env_owned = env.clone();
-                                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-                                    || try_absorb(&cid_owned, &env_owned, managed),
-                                ));
+                                let outcome =
+                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                        try_absorb(&cid_owned, &env_owned, managed)
+                                    }));
                                 match outcome {
                                     Ok(true) => {
                                         let _ = req.respond(
@@ -189,7 +193,9 @@ pub(crate) fn handle(
                                         // falling through to v1 is byte-identical fail-open.
                                         log_meta(
                                             "managed-panic",
-                                            &format!("cid={cid_owned}: recovered, falling back to v1"),
+                                            &format!(
+                                                "cid={cid_owned}: recovered, falling back to v1"
+                                            ),
                                         );
                                     }
                                 }
@@ -457,7 +463,12 @@ fn try_absorb(cid: &str, env: &Envelope, managed: &ManagedCtx) -> bool {
     let ops: Vec<Op> = {
         let mut st = managed.state.lock().unwrap_or_else(|e| e.into_inner());
         if !st.items.contains_key(&key) {
-            let mut item = WorkItem::new(key.clone(), cid.to_string(), infer_item_type(&env.kind), now);
+            let mut item = WorkItem::new(
+                key.clone(),
+                cid.to_string(),
+                infer_item_type(&env.kind),
+                now,
+            );
             item.title = env.title.clone();
             st.learn(item);
         }
@@ -611,12 +622,16 @@ fn fingerprint_for(env: &Envelope) -> Option<String> {
                 &env.status,
             ))
         }
-        "github.issue-opened" | "github.issue-commented" => {
-            Some(registry::issue_fingerprint(&env.repo, &env.number, &env.kind))
-        }
-        "github.pr-status-changed" => {
-            Some(registry::pr_fingerprint(&env.repo, &env.number, &env.status))
-        }
+        "github.issue-opened" | "github.issue-commented" => Some(registry::issue_fingerprint(
+            &env.repo,
+            &env.number,
+            &env.kind,
+        )),
+        "github.pr-status-changed" => Some(registry::pr_fingerprint(
+            &env.repo,
+            &env.number,
+            &env.status,
+        )),
         _ => None,
     }
 }
@@ -884,7 +899,9 @@ mod tests {
 
     #[test]
     fn try_absorb_new_message_for_known_channel() {
-        let managed = test_ctx(WorkitemChannels::Set(["1".to_string()].into_iter().collect()));
+        let managed = test_ctx(WorkitemChannels::Set(
+            ["1".to_string()].into_iter().collect(),
+        ));
         let env = Envelope {
             kind: "github.issue-opened".to_string(),
             repo: "o/r".to_string(),
@@ -901,7 +918,9 @@ mod tests {
 
     #[test]
     fn try_absorb_drops_duplicate_events() {
-        let managed = test_ctx(WorkitemChannels::Set(["1".to_string()].into_iter().collect()));
+        let managed = test_ctx(WorkitemChannels::Set(
+            ["1".to_string()].into_iter().collect(),
+        ));
         let env = Envelope {
             kind: "github.issue-opened".to_string(),
             repo: "o/r".to_string(),
@@ -923,7 +942,9 @@ mod tests {
     /// same raw content is completely unaffected by the aborted managed attempt.
     #[test]
     fn managed_path_panic_falls_back_to_byte_identical_v1_output() {
-        let managed = test_ctx(WorkitemChannels::Set(["1".to_string()].into_iter().collect()));
+        let managed = test_ctx(WorkitemChannels::Set(
+            ["1".to_string()].into_iter().collect(),
+        ));
         let key = item_key("o/r", "5");
         {
             let mut st = managed.state.lock().unwrap();
@@ -944,7 +965,10 @@ mod tests {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             try_absorb("1", &env, &managed)
         }));
-        assert!(result.is_err(), "broken invariant must panic, not silently corrupt state");
+        assert!(
+            result.is_err(),
+            "broken invariant must panic, not silently corrupt state"
+        );
         assert_eq!(
             queue::queue_len(&managed.cfg.state_dir),
             0,
@@ -977,7 +1001,9 @@ mod tests {
         use crate::discord::MockDiscord;
         use crate::flush::{flush_tick, Clock, FlushCfg, SystemClock};
 
-        let managed = test_ctx(WorkitemChannels::Set(["1".to_string()].into_iter().collect()));
+        let managed = test_ctx(WorkitemChannels::Set(
+            ["1".to_string()].into_iter().collect(),
+        ));
         let env = Envelope {
             kind: "github.issue-opened".to_string(),
             repo: "o/r".to_string(),

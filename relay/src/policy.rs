@@ -194,11 +194,7 @@ fn pr_status(env: &Envelope) -> &str {
 
 /// Resolve a per-kind `surface` override from the design system, if present.
 fn override_surface(ds: &Value, kind: &str) -> Option<Surface> {
-    let s = ds
-        .get("kinds")?
-        .get(kind)?
-        .get("surface")?
-        .as_str()?;
+    let s = ds.get("kinds")?.get(kind)?.get("surface")?.as_str()?;
     surface_from_str(s)
 }
 
@@ -238,7 +234,14 @@ mod tests {
     fn flag_off_is_always_unmanaged() {
         let env = env_with("github.issue-opened", "");
         assert_eq!(
-            decide("github.issue-opened", &env, false, false, false, &Value::Null),
+            decide(
+                "github.issue-opened",
+                &env,
+                false,
+                false,
+                false,
+                &Value::Null
+            ),
             Surface::Unmanaged
         );
     }
@@ -249,15 +252,57 @@ mod tests {
         let rows: &[(&str, &str, bool, bool, Surface)] = &[
             // issues
             ("github.issue-opened", "", false, false, Surface::NewMessage),
-            ("github.issue-commented", "", true, false, Surface::ThreadPost),
-            ("github.issue-commented", "", false, false, Surface::NewMessage),
+            (
+                "github.issue-commented",
+                "",
+                true,
+                false,
+                Surface::ThreadPost,
+            ),
+            (
+                "github.issue-commented",
+                "",
+                false,
+                false,
+                Surface::NewMessage,
+            ),
             // pr status
-            ("github.pr-status-changed", "open", false, false, Surface::NewMessage),
-            ("github.pr-status-changed", "open", true, false, Surface::EditSummary),
-            ("github.pr-status-changed", "merged", true, false, Surface::EditSummary),
-            ("github.pr-status-changed", "closed", true, false, Surface::EditSummary),
+            (
+                "github.pr-status-changed",
+                "open",
+                false,
+                false,
+                Surface::NewMessage,
+            ),
+            (
+                "github.pr-status-changed",
+                "open",
+                true,
+                false,
+                Surface::EditSummary,
+            ),
+            (
+                "github.pr-status-changed",
+                "merged",
+                true,
+                false,
+                Surface::EditSummary,
+            ),
+            (
+                "github.pr-status-changed",
+                "closed",
+                true,
+                false,
+                Surface::EditSummary,
+            ),
             // workitem dispatch
-            ("workitem.dispatched", "", true, false, Surface::EditAndThread),
+            (
+                "workitem.dispatched",
+                "",
+                true,
+                false,
+                Surface::EditAndThread,
+            ),
             ("workitem.dispatched", "", false, false, Surface::NewMessage),
             // CI success/neutral: known -> edit, unknown -> Drop (flood class)
             ("github.ci-started", "", true, false, Surface::EditSummary),
@@ -270,15 +315,39 @@ mod tests {
             ("github.ci-failed", "", true, false, Surface::EditAndThread),
             ("github.ci-failed", "", false, false, Surface::NewMessage),
             // merge verdict
-            ("workitem.merge-verdict", "", false, false, Surface::NewMessage),
-            ("workitem.merge-verdict", "", true, false, Surface::NewMessage),
+            (
+                "workitem.merge-verdict",
+                "",
+                false,
+                false,
+                Surface::NewMessage,
+            ),
+            (
+                "workitem.merge-verdict",
+                "",
+                true,
+                false,
+                Surface::NewMessage,
+            ),
             // unmanaged classes
-            ("agent.approval-requested", "", true, false, Surface::Unmanaged),
+            (
+                "agent.approval-requested",
+                "",
+                true,
+                false,
+                Surface::Unmanaged,
+            ),
             ("session.started", "", false, false, Surface::Unmanaged),
             ("session.ended", "", true, false, Surface::Unmanaged),
             ("git.commit", "", false, false, Surface::Unmanaged),
             ("git.branch-changed", "", false, false, Surface::Unmanaged),
-            ("github.release-published", "", false, false, Surface::Unmanaged),
+            (
+                "github.release-published",
+                "",
+                false,
+                false,
+                Surface::Unmanaged,
+            ),
             ("gjc.canary", "", false, false, Surface::Unmanaged),
             ("heartbeat", "", false, false, Surface::Unmanaged),
             ("custom.thing", "", false, false, Surface::Unmanaged),
@@ -339,11 +408,14 @@ mod tests {
     /// opts in.
     #[test]
     fn flood_drop_cannot_be_overridden_by_per_kind_surface() {
-        let ds_edit_summary = |kind: &str| {
-            json!({ "kinds": { kind: { "surface": "edit-summary" } } })
-        };
+        let ds_edit_summary =
+            |kind: &str| json!({ "kinds": { kind: { "surface": "edit-summary" } } });
 
-        for kind in ["github.ci-started", "github.ci-passed", "github.ci-cancelled"] {
+        for kind in [
+            "github.ci-started",
+            "github.ci-passed",
+            "github.ci-cancelled",
+        ] {
             let ds = ds_edit_summary(kind);
             let env = env_with(kind, "");
 
@@ -370,7 +442,14 @@ mod tests {
         });
         let env_failed = env_with("github.ci-failed", "");
         assert_eq!(
-            decide("github.ci-failed", &env_failed, false, false, true, &ds_failed),
+            decide(
+                "github.ci-failed",
+                &env_failed,
+                false,
+                false,
+                true,
+                &ds_failed
+            ),
             Surface::NewMessage,
             "unknown-item ci-failed must surface as NewMessage regardless of override"
         );
@@ -382,7 +461,14 @@ mod tests {
         });
         let env_issue = env_with("github.issue-opened", "");
         assert_eq!(
-            decide("github.issue-opened", &env_issue, false, true, true, &ds_dedup),
+            decide(
+                "github.issue-opened",
+                &env_issue,
+                false,
+                true,
+                true,
+                &ds_dedup
+            ),
             Surface::Drop,
             "dedup hit must win over any per-kind override"
         );
@@ -392,7 +478,10 @@ mod tests {
     fn surface_from_str_variants() {
         assert_eq!(surface_from_str("NewMessage"), Some(Surface::NewMessage));
         assert_eq!(surface_from_str("edit_summary"), Some(Surface::EditSummary));
-        assert_eq!(surface_from_str("edit-and-thread"), Some(Surface::EditAndThread));
+        assert_eq!(
+            surface_from_str("edit-and-thread"),
+            Some(Surface::EditAndThread)
+        );
         assert_eq!(surface_from_str("DROP"), Some(Surface::Drop));
         assert_eq!(surface_from_str("nonsense"), None);
     }

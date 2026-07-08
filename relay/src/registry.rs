@@ -359,10 +359,8 @@ mod tests {
     #[test]
     fn prune_dedup_drops_expired() {
         let mut st = State::new();
-        st.dedup
-            .insert("old".to_string(), 0);
-        st.dedup
-            .insert("new".to_string(), DEDUP_TTL_SECS);
+        st.dedup.insert("old".to_string(), 0);
+        st.dedup.insert("new".to_string(), DEDUP_TTL_SECS);
         st.prune_dedup(DEDUP_TTL_SECS + 10);
         assert!(!st.dedup.contains_key("old"));
         assert!(st.dedup.contains_key("new"));

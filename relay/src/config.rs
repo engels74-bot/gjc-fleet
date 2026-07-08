@@ -182,13 +182,12 @@ impl Config {
         );
 
         // --- v2 work-item core ---
-        let workitem_channels = parse_workitem_channels(
-            &std::env::var("RELAY_WORKITEM_CHANNELS").unwrap_or_default(),
-        );
+        let workitem_channels =
+            parse_workitem_channels(&std::env::var("RELAY_WORKITEM_CHANNELS").unwrap_or_default());
 
         let state_dir = std::env::var("RELAY_STATE_DIR").unwrap_or_else(|_| {
-            let home = std::env::var("HOME")
-                .expect("gjc-relay: neither RELAY_STATE_DIR nor HOME is set");
+            let home =
+                std::env::var("HOME").expect("gjc-relay: neither RELAY_STATE_DIR nor HOME is set");
             format!("{home}/.gjc-relay/state")
         });
 
@@ -301,7 +300,10 @@ mod tests {
                 window_secs: 5
             }
         );
-        assert_eq!(ManagedRate::parse("conservative"), ManagedRate::parse("low"));
+        assert_eq!(
+            ManagedRate::parse("conservative"),
+            ManagedRate::parse("low")
+        );
         assert_eq!(
             ManagedRate::parse("medium"),
             ManagedRate {

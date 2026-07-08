@@ -138,7 +138,10 @@ impl DiscordApi for UreqDiscord {
         embed: &Value,
     ) -> Result<(), DiscordErr> {
         let url = format!("{}/{mid}", self.channel_messages_url(cid));
-        let req = self.agent.request("PATCH", &url).set("Authorization", token);
+        let req = self
+            .agent
+            .request("PATCH", &url)
+            .set("Authorization", token);
         send_json(req, &json!({ "embeds": [embed] }))?;
         Ok(())
     }
@@ -394,7 +397,9 @@ mod tests {
         let mock = MockDiscord::new();
         let e = json!({});
         let a = mock.post_message("c", "t", &e).unwrap();
-        let b = mock.create_thread_from_message("c", &a, "t", "name", 1440).unwrap();
+        let b = mock
+            .create_thread_from_message("c", &a, "t", "name", 1440)
+            .unwrap();
         assert_ne!(a, b, "auto ids must be distinct");
         assert!(a.starts_with("mock-id-") && b.starts_with("mock-id-"));
         assert_eq!(mock.calls().len(), 2);

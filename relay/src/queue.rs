@@ -120,7 +120,11 @@ fn op_filename(op: &Op, epoch_ms: i64, seq: u64) -> String {
 pub(crate) fn enqueue(state_dir: &str, op: &Op) -> io::Result<PathBuf> {
     let dir = queue_dir(state_dir);
     fs::create_dir_all(&dir)?;
-    let path = dir.join(op_filename(op, now_ms(), SEQ.fetch_add(1, Ordering::SeqCst)));
+    let path = dir.join(op_filename(
+        op,
+        now_ms(),
+        SEQ.fetch_add(1, Ordering::SeqCst),
+    ));
     let data = serde_json::to_vec_pretty(op).map_err(io::Error::other)?;
     atomic_write(&path, &data)?;
     Ok(path)
@@ -146,11 +150,7 @@ pub(crate) enum EnqueueOutcome {
 
 /// Enqueue `op`, but if the queue already holds `cap` pending ops, bury it
 /// immediately instead (never blocks, never grows past cap).
-pub(crate) fn enqueue_checked(
-    state_dir: &str,
-    op: &Op,
-    cap: usize,
-) -> io::Result<EnqueueOutcome> {
+pub(crate) fn enqueue_checked(state_dir: &str, op: &Op, cap: usize) -> io::Result<EnqueueOutcome> {
     if queue_len(state_dir) >= cap {
         bury_new(state_dir, op, "queue capacity exceeded")?;
         return Ok(EnqueueOutcome::CapacityExceeded);
@@ -389,7 +389,10 @@ mod tests {
         }
         cleanup_recovered(&op_path, &cpath).unwrap();
         assert!(!op_path.exists() && !cpath.exists());
-        assert!(scan(&dir).is_empty(), "both files must be gone after recovery cleanup");
+        assert!(
+            scan(&dir).is_empty(),
+            "both files must be gone after recovery cleanup"
+        );
         cleanup(&dir);
     }
 
