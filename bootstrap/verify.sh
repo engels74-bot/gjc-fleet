@@ -234,8 +234,8 @@ elif [ -z "$RELAY_WORKITEM_CHANNELS" ] || [ -z "$GJC_LAB_CHANNEL" ] || \
 elif [ -x "$CLAWHIP_BIN" ]; then
   # Pre-flight: the gjc.canary-item route ships with the clawhip v2 route bundle
   # (rollout step 1). Until that is deployed, the emit falls through to the default
-  # route and the relay [proxy]'s it — there is no [edit]/[thread] to observe, so a
-  # naive run false-FAILs during the entire pre-rollout window. Detect the absent
+  # route and the relay [proxy]'s it — there are no managed-path markers to observe, so
+  # a naive run false-FAILs during the entire pre-rollout window. Detect the absent
   # route via clawhip's own routing resolution and skip instead. Only an affirmative
   # "routes present but none matched" skips; a broken/empty probe falls through to the
   # live emit so a genuine managed-path regression still surfaces.
@@ -243,17 +243,24 @@ elif [ -x "$CLAWHIP_BIN" ]; then
   if [ -n "$route_probe" ] && printf '%s' "$route_probe" | jq -e '.routes' >/dev/null 2>&1 \
      && ! printf '%s' "$route_probe" | jq -e 'any(.routes[]?; .matched==true)' >/dev/null 2>&1; then
     echo "skip: work-item thread canary (gjc.canary-item route not deployed — clawhip v2 routes are rollout step 1)"
-  elif "$CLAWHIP_BIN" emit gjc.canary-item --channel "$GJC_LAB_CHANNEL" --repo verify --status ok \
+  elif "$CLAWHIP_BIN" emit gjc.canary-item --channel "$GJC_LAB_CHANNEL" \
+       --kind2 github.issue-opened --repo engels74/verify-canary --number 0 --status open \
        --actor verify.sh --message "fleet verify workitem canary" >/dev/null 2>&1; then
+    # The gjc.canary-item route template is `kind={kind2} ...`: kind2 MUST be set or the
+    # relay sees an empty kind, classifies it `default`, and proxies it (no managed path).
+    # Assert [managed-accept] — the definitive "entered the managed work-item path" marker.
+    # It fires for every managed event (a [post] on the first run, a [dedup-drop] on repeats),
+    # so the fixed canary number (verify-canary#0) makes this deterministic without growing
+    # state unboundedly.
     workitem_seen=0
     for _ in {1..20}; do
-      if userjournal -u gjc-relay.service --since "-20s" 2>/dev/null | grep -qE '\[(edit|thread)\]'; then workitem_seen=1; break; fi
+      if userjournal -u gjc-relay.service --since "-20s" 2>/dev/null | grep -qE '\[(managed-accept|post|edit|thread)\]'; then workitem_seen=1; break; fi
       sleep 1
     done
     if [ "$workitem_seen" -eq 1 ]; then
-      ok "work-item canary: relay [edit] or [thread] line seen"
+      ok "work-item canary: relay entered managed path ([managed-accept]/[post]/[edit]/[thread])"
     else
-      bad "work-item canary: no [edit]/[thread] line seen within poll window"
+      bad "work-item canary: no managed-path line seen within poll window"
     fi
   else
     bad "work-item canary: 'clawhip emit gjc.canary-item' failed"
