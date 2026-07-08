@@ -103,11 +103,32 @@ caches.
 
 Purely a **runtime home**: `gjc-relay` binary (built from the `relay/` subdir of the
 `engels74-bot/gjc-fleet` monorepo at `~/github/engels74-bot/gjc-fleet/relay` and copied here),
-**`design-system.json`** (shared styling source of truth), `relay.env`, `dlq-watch.sh`,
-`alert.sh`, `check-kind-coverage.sh`, `.omc/`. `relay.env` is now a rendered artifact
-(`render/render.sh` target, 0600) rather than hand-maintained. Since the 2026-07-07 gjc-fleet
+**`design-system.json`** (shared styling source of truth, **version 2** since the notification
+overhaul), `relay.env`, the supervision scripts (`dlq-watch.sh`, `alert.sh`,
+`check-kind-coverage.sh`, and — new in v2 — `relay-heartbeat.sh`, `relay-health-watch.sh`),
+`.omc/`, and — **new in v2** — the `state/` directory. `relay.env` is a rendered artifact
+(`render/render.sh` target, 0600) rather than hand-maintained. Its keys are `RELAY_BIND`,
+`RELAY_DESIGN_SYSTEM`, `GJC_ALERT_CHANNEL` (host-local numeric ID for `#gjc-approvals`), plus the v2
+managed-path keys appended by `render.sh`: `RELAY_STATE_DIR`, `RELAY_MANAGED_RATE` (preset or
+`<t>/<w>s`), `RELAY_WORKITEM_CHANNELS` (comma-joined opt-in channel IDs; **rendered empty by default**
+⇒ managed path OFF ⇒ byte-identical v1), `GJC_LAB_CHANNEL` (host-local canary ID for the heartbeat),
+and any optional per-channel `RELAY_DEBOUNCE_SECS__<cid>` pins. Values are host-local; the numeric
+channel IDs live only in the rendered file and `fleet.toml`, never in the tracked template. Since the 2026-07-07 gjc-fleet
 monorepo migration folded the source's brief standalone `engels74-bot/gjc-relay` repo into
 `gjc-fleet`, no separate relay repo remains — git history preserved via merge.
+
+**`~/.gjc-relay/state/`** (v2 durability surface, `RELAY_STATE_DIR`, mode 0700 by convention) — this
+is where the managed work-item path keeps its durable delivery state. `state.json` is a crash-recovery
+**cache** of the registry (anchor message ids + facets + a dedup ledger; `version:2`), written
+atomically (tmp + fsync + rename) and **quarantined** to `state.json.corrupt-<epoch>` on a parse/version
+mismatch rather than crashing the relay. The **delivery source of truth** is `queue/`: one
+`<epoch_ms>-<seq>-<opclass>.json` op file per pending Discord operation, fsync'd **before** the relay
+acks clawhip, plus a sibling `<op>.json.committed` marker (message_id + fingerprint + delivered_at)
+fsync'd before the op file is unlinked. Ops that exhaust their retry budget / exceed
+`RELAY_DELIVERY_MAX_AGE_SECS` / overflow `RELAY_QUEUE_CAP` / hit a 403 are moved to `dead/`.
+`flush.alive` is a mtime-only liveness marker the flush thread touches every tick (read by
+`relay-health-watch.sh`). **No auth token is ever written to any file under `state/`** — the bot token
+lives in memory only. Mechanism detail: [35-gjc-relay.md](35-gjc-relay.md#the-v2-managed-work-item-path).
 
 ### `~/.gjc-bot` (gjc-bot state) — detail in [40-gjc-bot-automation.md](40-gjc-bot-automation.md#env--config-surface)
 
@@ -120,12 +141,15 @@ state dir now matches the component name.
 | `issues.jsonl` | Dedup ledger of processed issues (terminal states `dispatched`/`skipped`) |
 | `reviews.jsonl` | Seen-set ledger for review-detector (marked on every poll) |
 | `merge-gate.jsonl` | Per-`repo#pr#sha` dedup ledger for merge-gate verdicts |
+| `review-policy.jsonl` | **New (2026-07-08)** — one-review policy ledger for automated-author PRs (renovate/dependabot). Append-only, keyed on the PR: `<repo>#<pr>#consumed` (the exactly-once "this PR was policy-handled" marker), `<repo>#<pr>#decision:<APPLY\|DISMISS\|ESCALATE>` (the bounded verdict), and `<repo>#<pr>#escalated` (handed to a human). |
+| `ci-fixer.jsonl` | **New (2026-07-08)** — fix-until-green loop ledger. Keys: `#pr:<pr>#try` and `#sha:<sha>#try` (per-PR / per-sha attempt counters bounding the loop), `#gaveup` (a cap was hit), and `#outcome:{fixed\|unchanged\|stale\|timeout}` (terminal result of an attempt). |
 | `gjc.lock` | Single-flight lock for the gjc run lane (held by `_exec` fd 9 for a run's lifetime; also taken by the janitor per pass) |
 | `review.lock` | Single-flight lock shared by review-run handler **and** merge-gate (mutual exclusion) |
 | `issues.lock`, `merge-gate.lock`, `reviews.lock` | Per-lane pass locks |
 | `adapter.log`, `gjc-run.log`, `review.log`, `merge-gate.log`, `janitor.log` | Per-lane logs |
 | `prompt-*.md` | Transient per-run prompt files (created by `gjc-run.sh launch`, removed by `_exec`) |
-| `gjc-bot.env` | **New (2026-07-07)** — rendered, 0600 env file supplying `ISSUE_NOTIFY_CHANNEL`/`MERGE_GATE_CHANNEL`/`REVIEW_NOTIFY_CHANNEL` (the numeric channel defaults removed from the scripts); loaded via each unit's `EnvironmentFile=-%h/.gjc-bot/gjc-bot.env` |
+| `ci-fixer.disable` | **New (2026-07-08)** — host-local kill-switch marker for the CI fixer: its presence disables the fix-until-green loop regardless of `CI_FIXER_ENABLED` (one of three off-switches, alongside `CI_FIXER_ENABLED=0` and `DRY_RUN`). |
+| `gjc-bot.env` | Rendered, 0600 env file, loaded via each unit's `EnvironmentFile=-%h/.gjc-bot/gjc-bot.env`. **2026-07-07:** channel defaults `ISSUE_NOTIFY_CHANNEL`/`MERGE_GATE_CHANNEL`/`REVIEW_NOTIFY_CHANNEL` (numeric IDs removed from the scripts). **2026-07-08 (notification overhaul):** the review-policy + CI-fixer knobs (all non-numeric-ID, so they ride the tracked template): `REVIEW_ENGINE` (`gjc`\|`claude` for the review handler run), `REVIEW_AUTOMATED_AUTHORS` (space-joined author logins routed through the one-review policy lane), `REVIEW_POLICY_MAX_HANDLER_RUNS`, `REVIEW_POLICY_DECISION_MODE`, and the CI-fixer caps `CI_FIXER_ENABLED` (primary kill switch, `0`=off default) / `CI_FIXER_MAX_PER_SHA` / `CI_FIXER_MAX_PER_PR` / `CI_FIXER_BACKOFF_BASE_MINS`. |
 
 ## Databases
 
@@ -270,3 +294,15 @@ alongside the pre-existing system-scope listing.
   `render.sh`, unit files, and `backuprestore/` scripts on disk.
 - 2026-07-08 (decommission pass) — systemd section updated: `/etc` fleet units deleted, old
   checkouts `*.retired`, fresh post-decommission snapshot. Tooling stays dual-scope defensively.
+- 2026-07-08 (notification overhaul — new state surfaces) — Documented the relay's v2 durability
+  surface `~/.gjc-relay/state/` (`state.json` cache + `.corrupt-<ts>` quarantine, `queue/` op files +
+  `.committed` markers as the delivery source of truth, `dead/` burials, `flush.alive` liveness) and
+  enumerated the rendered `relay.env` keys incl. the new `RELAY_STATE_DIR`/`RELAY_MANAGED_RATE`/
+  `RELAY_WORKITEM_CHANNELS`/`GJC_LAB_CHANNEL` (values host-local; `RELAY_WORKITEM_CHANNELS` empty by
+  default ⇒ managed path off). Added the two new `~/.gjc-bot` ledgers — `review-policy.jsonl`
+  (`<repo>#<pr>#consumed`/`#decision:<APPLY\|DISMISS\|ESCALATE>`/`#escalated`) and `ci-fixer.jsonl`
+  (`#pr:<pr>#try`/`#sha:<sha>#try`/`#gaveup`/`#outcome:{fixed\|unchanged\|stale\|timeout}`) — plus the
+  `ci-fixer.disable` kill-switch marker, and expanded the `gjc-bot.env` row with the review-policy /
+  CI-fixer knobs (`REVIEW_ENGINE`, `REVIEW_AUTOMATED_AUTHORS`, `REVIEW_POLICY_MAX_HANDLER_RUNS`,
+  `REVIEW_POLICY_DECISION_MODE`, `CI_FIXER_ENABLED`/`_MAX_PER_SHA`/`_MAX_PER_PR`/`_BACKOFF_BASE_MINS`).
+  Names/roles only — no secret values, no numeric Discord IDs.

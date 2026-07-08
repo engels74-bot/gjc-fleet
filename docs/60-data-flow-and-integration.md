@@ -1,10 +1,11 @@
 <!--
 status: verified         # draft | reviewed | verified
-last_verified: 2026-07-07
+last_verified: 2026-07-08
 sources:
   - ~/github/engels74-bot/gjc-fleet/pipeline/<stage>/*.sh (the pipeline spine; stage-dir layout)
   - ~/.clawhip/config.toml, ~/github/engels74/gjc/clawhip/src/sink/local_file.rs
-  - ~/.hermes/config.yaml, ~/.hermes/cron/jobs.json, ~/.gjc-relay/src/main.rs
+  - ~/.hermes/config.yaml, ~/.hermes/cron/jobs.json
+  - ~/github/engels74-bot/gjc-fleet/relay/src/{http,policy,queue,flush}.rs (v2 work-item path)
   - ~/.gjc-bot/*.log (live run evidence: mover-status#24 → PR #25; easyhdr#115 review handler ×2)
 maintainer_notes: >
   Edit this file in isolation. Keep headings stable; append to Changelog at the bottom.
@@ -28,7 +29,7 @@ maintainer_notes: >
 | gjc-bot → clawhip | **CLI → loopback HTTP**: `clawhip send` / `clawhip agent <state>` POST to the daemon on 127.0.0.1:25294 | Event JSON; `GJCEMBED1` envelope in message content | `run/gjc-run.sh:49-58`; `lib/discord-embed.sh:61` |
 | gjc-bot → GitHub | **CLI**: `gh api` / `gh pr list` / `gh pr comment` / `gh issue view` | REST JSON | throughout the scripts |
 | gjc-bot → LLM (triage, merge verdict) | **HTTPS**: NanoGPT chat-completions, **no tools** | one-line `ACTIONABLE:`/`SKIP:` or `MERGE_READY:`/`REQUEST_CHANGES:` | `intake/issue-spool-adapter.sh:65-72`; `review/merge-gate.sh:62-70` |
-| clawhip → Discord | **HTTP via loopback proxy**: REST base overridden to gjc-relay 127.0.0.1:25295 | Discord REST; relay rewrites `GJCEMBED1` content into embeds (since 2026-07-07 also splitting multi-envelope batches into one embed per line) | `~/.clawhip/clawhip.env`; `~/.gjc-relay/src/main.rs` (`MAGIC`/`ALLOWED_KEYS` at `:22-23`) |
+| clawhip → Discord | **HTTP via loopback proxy**: REST base overridden to gjc-relay 127.0.0.1:25295 | Discord REST; relay rewrites `GJCEMBED1` content into embeds (multi-envelope batches split one embed per line). **v2 (2026-07-08):** for a channel in `RELAY_WORKITEM_CHANNELS` the relay **absorbs** the event (durable enqueue + synthetic 200) and a flush thread delivers a coalesced/threaded managed embed; empty selector ⇒ byte-identical v1 | `~/.clawhip/clawhip.env`; `~/github/engels74-bot/gjc-fleet/relay/src/{http,policy,queue,flush}.rs` |
 | clawhip → GitHub | **Polling**: monitor sources hit the GitHub API every 60 s for 6 repos | REST JSON → internal events | `~/.clawhip/config.toml [monitors]` |
 | hermes → gjc | **MCP (stdio subprocess)**: gateway registers `gjc_coordinator` → `gjc mcp-serve coordinator` | MCP tool calls (start_session, send_prompt, read_turn, …) | `~/.hermes/config.yaml`; live child in the gateway cgroup |
 | hermes → gjc-bot | **Cron subprocess**: two **real-file** wrappers in `~/.hermes/scripts/` (hermes rejects symlinks for `--script`) that `exec` `maintenance/stale-branches.sh` + `intake/issue-triage-fetch.sh` in the `gjc-fleet` monorepo's `pipeline/` subdir; cron may also carry self-scheduled agent jobs that don't touch gjc-bot (e.g. the `monitor-easyhdr-pr115-rustsec` 60-min job) | script stdout → LLM prompt / Discord message | `~/.hermes/cron/jobs.json`; `~/.hermes/scripts/{stale-branches,issue-triage-fetch}.sh` |
@@ -130,6 +131,62 @@ This lane uses gjc's own deterministic `main-<hash>` worktrees and does **not** 
 the shared launcher was explicitly held; see
 [90-glossary-and-open-questions.md](90-glossary-and-open-questions.md#open-questions)).
 
+## The Discord delivery path: v1 pass-through vs v2 work-item narration
+
+The clawhip → relay → Discord seam has two shapes in the same relay binary, selected per-channel by
+`RELAY_WORKITEM_CHANNELS`:
+
+- **v1 (per-event pass-through embeds).** Each clawhip `POST /channels/{id}/messages` is rewritten
+  1:1 into a Discord embed and forwarded immediately. One event → one visible message. A branch-push
+  or reboot that fires a burst of `github.ci-*` events therefore renders a burst of embeds (the
+  observed `#easyhdr` flood). This is the byte-identical default whenever the channel is **not** in
+  `RELAY_WORKITEM_CHANNELS`.
+- **v2 (managed work-item narration).** For an opted-in channel, the relay **absorbs** the event
+  rather than forwarding it: `clawhip POST → relay absorb (fsync a durable queue op → return a
+  synthetic 200 to clawhip) → a single flush thread coalesces/paces the op → Discord`. The visible
+  result is a **living summary embed per issue/PR, edited in place** as the item's CI/review/pipeline
+  facets change, plus a **per-item thread** for detail (comments, CI-failure notes). A burst of edits
+  for one item collapses to **one** PATCH (5s-quiet / 20s-cap debounce), and an **unknown-item
+  `github.ci-*` event is Dropped** — this is where the reboot/branch-push flood is killed, while a
+  genuine `github.ci-failed` still surfaces. clawhip sees a normal `200` for every case (including a
+  Drop), so it never DLQ-buries a deliberately-suppressed event.
+
+Both shapes share the same `design-system.json` styling and the same durability guarantees on the
+clawhip side; only the relay's internal handling differs. Full mechanism:
+[35-gjc-relay.md](35-gjc-relay.md#the-v2-managed-work-item-path).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CH as clawhip (daemon :25294)
+    participant HW as relay HTTP worker
+    participant Q as state/queue/ (durable, fsync)
+    participant FL as relay flush thread (single deliverer)
+    participant DC as Discord
+
+    Note over CH,DC: v2 managed path — channel ∈ RELAY_WORKITEM_CHANNELS
+    CH->>HW: POST /channels/{id}/messages (GJCEMBED1 kind=github.ci-passed …)
+    HW->>HW: policy::decide → EditSummary (item known) / Drop (unknown CI) / …
+    alt managed surface (not Drop)
+        HW->>Q: enqueue <epoch>-<seq>-editsummary.json (fsync BEFORE ack)
+        HW-->>CH: synthetic 200 {"gjc_relay":"accepted"}  (no Discord call yet)
+        Note over FL: debounce: coalesce N edits for the item → 1 PATCH
+        FL->>Q: scan(); pick the debounced winner
+        FL->>DC: PATCH summary embed (token from in-memory TokenCache)
+        DC-->>FL: 200
+        FL->>Q: write .committed (fsync) → unlink .json; fold id into registry
+    else Drop (dedup hit, or unknown-item CI flood class)
+        HW-->>CH: synthetic 200 (event suppressed; [dedup-drop]/[drop] logged)
+    end
+```
+
+**Crash-safety along this path:** because the op is fsync'd to `queue/` *before* the 200, a relay
+restart replays the pending op instead of losing it; and because a `NewMessage` op does a
+`GET …?limit=50` read-back + embed-fingerprint match before re-POSTing, a crash in the
+post-POST/pre-`.committed` window adopts the already-posted message rather than duplicating it (Discord
+message-create has no idempotency key). See
+[35-gjc-relay.md](35-gjc-relay.md#two-phase-durable-commit-queuers).
+
 ## Discord topology
 
 Guild: "engels74's server". Channels (names only; numeric IDs live in the configs/scripts):
@@ -148,6 +205,10 @@ Guild: "engels74's server". Channels (names only; numeric IDs live in the config
 - **Relay down** → clawhip's send fails → DLQ-bury (permanent loss) → `gjc-dlq-watch` posts an
   out-of-band alarm directly to Discord; `gjc-relay.service` restarts forever (`RestartSec=1`).
   See [35-gjc-relay.md](35-gjc-relay.md#live-services-the-supervision-stack).
+- **Relay up but managed delivery stuck** (v2) → the flush thread stalls or an op sits past
+  `RELAY_DELIVERY_MAX_AGE_SECS` → `gjc-relay-health-watch` (2-min timer) alarms `#gjc-approvals`
+  directly; an op that exhausts retries is buried to `state/dead/` with a `[dead-letter]` line that
+  `gjc-dlq-watch` also alarms on. False-alarm-guarded (empty queue / never-flushed relay = no alarm).
 - **gjc run hangs** → `_exec`'s `timeout 1800` kills it; `failed` embed posted; worktree removed;
   janitor (2 min) is the crash-net if `_exec` itself died.
 - **Adapter busy** (gjc.lock held) → rc 75, issue left un-ledgered, retried by the 5-min backup
@@ -196,3 +257,12 @@ Guild: "engels74's server". Channels (names only; numeric IDs live in the config
   `gjc-fleet/pipeline/<stage>/` instead of the archived standalone `gjc-bot-scripts` repo; the
   hermes→gjc-bot seam row now says "the `gjc-fleet` monorepo's `pipeline/` subdir". Seam mechanics,
   the sequence diagram, and the Discord topology are all unaffected by the migration.
+- 2026-07-08 (notification overhaul — v2 work-item path) — Added the "v1 pass-through vs v2 work-item
+  narration" section with a new managed-path sequence diagram (clawhip POST → relay absorb → fsync
+  queue op → synthetic 200 → flush thread coalesces/paces → Discord living-summary edit + per-item
+  thread), and called out where the unknown-item `github.ci-*` Drop kills the reboot/branch-push
+  flood. Updated the clawhip→Discord seam row for the v2 absorb behaviour (empty
+  `RELAY_WORKITEM_CHANNELS` ⇒ byte-identical v1) and repointed its citation from the retired single
+  `~/.gjc-relay/src/main.rs` to the relay's `{http,policy,queue,flush}.rs`. Added the "managed delivery
+  stuck" failure path (health-watch + `dead/` burial). The existing end-to-end issue diagram and the
+  Discord topology are unchanged. Verified against the actual relay source.
