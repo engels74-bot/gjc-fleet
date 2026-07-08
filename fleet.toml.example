@@ -64,6 +64,20 @@ engine        = "gjc"
 model_primary = "opus"
 model_fast    = "sonnet"
 
+[review.policy]
+# One-review policy for automated-author PRs (renovate/dependabot). For a PR opened
+# by one of these logins the review lane consumes EXACTLY ONE suggestion-carrying
+# augmentcode[bot] review, then makes a bounded APPLY / DISMISS / ESCALATE decision on
+# any later review (docs/40 review-policy state machine). Human- and bot-authored PRs
+# are untouched by this lane.
+automated_authors = ["renovate[bot]", "dependabot[bot]"]
+# Hard ceiling on handler launches per PR (first consume + APPLY relaunches). Once the
+# consumed-marker count reaches this, further APPLY decisions record only, never relaunch.
+max_handler_runs  = 2
+# Decision engine for the later-review verdict. "brain" = the no-tools NanoGPT verdict
+# path (same model as issue-triage / merge-gate). Inconclusive verdicts fail toward a human.
+decision_mode     = "brain"
+
 [pins]
 # Upstream engines — never vendored; installed via their own channels.
 clawhip    = "0.6.11"    # cargo install clawhip --version <pin> --locked

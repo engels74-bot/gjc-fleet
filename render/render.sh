@@ -64,6 +64,13 @@ setup_vars() {
   # Non-numeric, so it rides in the tracked gjc-bot.env template as {{REVIEW_ENGINE}}.
   REVIEW_ENGINE="$(cfg '.review.engine')"; REVIEW_ENGINE="${REVIEW_ENGINE:-gjc}"
   export GH_ROOT FLEET_REPO RELAY_BIND REVIEW_ENGINE
+  # [review.policy] — one-review policy for automated-author PRs. Non-numeric knobs,
+  # so they ride in the tracked gjc-bot.env template. AUTHORS is space-joined (the
+  # detector splits on whitespace, glob-safely); jq defaults keep an absent block sane.
+  REVIEW_AUTOMATED_AUTHORS="$(jq -r '(.review.policy.automated_authors // ["renovate[bot]","dependabot[bot]"]) | join(" ")' <<<"$CFG_JSON")"
+  REVIEW_POLICY_MAX_HANDLER_RUNS="$(cfg '.review.policy.max_handler_runs')"; REVIEW_POLICY_MAX_HANDLER_RUNS="${REVIEW_POLICY_MAX_HANDLER_RUNS:-2}"
+  REVIEW_POLICY_DECISION_MODE="$(cfg '.review.policy.decision_mode')"; REVIEW_POLICY_DECISION_MODE="${REVIEW_POLICY_DECISION_MODE:-brain}"
+  export REVIEW_AUTOMATED_AUTHORS REVIEW_POLICY_MAX_HANDLER_RUNS REVIEW_POLICY_DECISION_MODE
   CH_DEFAULT="$(ch default)"; export CH_DEFAULT
   CH_GJC_APPROVALS="$(ch gjc-approvals)"; export CH_GJC_APPROVALS
   CH_GJC_LAB="$(ch gjc-lab)"; export CH_GJC_LAB
