@@ -232,7 +232,18 @@ elif [ -z "$RELAY_WORKITEM_CHANNELS" ] || [ -z "$GJC_LAB_CHANNEL" ] || \
      ! printf ',%s,' "$RELAY_WORKITEM_CHANNELS" | grep -qF ",$GJC_LAB_CHANNEL,"; then
   echo "skip: work-item thread canary (RELAY_WORKITEM_CHANNELS empty or #gjc-lab not opted in)"
 elif [ -x "$CLAWHIP_BIN" ]; then
-  if "$CLAWHIP_BIN" emit gjc.canary-item --channel "$GJC_LAB_CHANNEL" --repo verify --status ok \
+  # Pre-flight: the gjc.canary-item route ships with the clawhip v2 route bundle
+  # (rollout step 1). Until that is deployed, the emit falls through to the default
+  # route and the relay [proxy]'s it — there is no [edit]/[thread] to observe, so a
+  # naive run false-FAILs during the entire pre-rollout window. Detect the absent
+  # route via clawhip's own routing resolution and skip instead. Only an affirmative
+  # "routes present but none matched" skips; a broken/empty probe falls through to the
+  # live emit so a genuine managed-path regression still surfaces.
+  route_probe="$("$CLAWHIP_BIN" explain --json gjc.canary-item 2>/dev/null || true)"
+  if [ -n "$route_probe" ] && printf '%s' "$route_probe" | jq -e '.routes' >/dev/null 2>&1 \
+     && ! printf '%s' "$route_probe" | jq -e 'any(.routes[]?; .matched==true)' >/dev/null 2>&1; then
+    echo "skip: work-item thread canary (gjc.canary-item route not deployed — clawhip v2 routes are rollout step 1)"
+  elif "$CLAWHIP_BIN" emit gjc.canary-item --channel "$GJC_LAB_CHANNEL" --repo verify --status ok \
        --actor verify.sh --message "fleet verify workitem canary" >/dev/null 2>&1; then
     workitem_seen=0
     for _ in {1..20}; do
