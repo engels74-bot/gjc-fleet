@@ -16,6 +16,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde_json::Value;
+
 use crate::config::ManagedRate;
 use crate::discord::{DiscordApi, DiscordErr};
 use crate::log::log_meta;
@@ -248,11 +250,13 @@ pub(crate) fn apply_delivery_result(state: &mut State, op: &Op, committed: &Comm
     }
     // Restart-recovery safety net: ensure the dedup fingerprint made it into
     // the snapshot even if the in-memory update that originally set it (at
-    // http.rs absorb time) never got persisted before a crash.
+    // http.rs absorb time) never got persisted before a crash. `state.dedup`
+    // values are SECONDS (registry::DEDUP_TTL_SECS, store::now_ts()) while
+    // `op.created_at` is MILLISECONDS (see queue::Op's doc comment) — convert.
     state
         .dedup
         .entry(op.fingerprint.clone())
-        .or_insert(op.created_at);
+        .or_insert(op.created_at / 1000);
 }
 
 /// One flush tick: scan the queue, fold back any already-committed leftovers
@@ -494,9 +498,17 @@ fn deliver_new_message(
 ) {
     // Read-back reconciliation (A2a step 3a): before re-POSTing, check whether
     // an earlier attempt already landed (crash between POST and .committed).
+    // Match on content, NOT exact Value equality (Round 7: Discord normalizes/
+    // enriches an echoed embed — adds "type":"rich", proxy_url, video, may
+    // reorder keys — so `returned == sent` NEVER holds in production).
     if let Ok(msgs) = api.list_recent_messages(&op.channel_id, token, 50) {
         for m in &msgs {
-            if m.get("embeds").and_then(|e| e.get(0)) == Some(&op.embed) {
+            let matched = m
+                .get("embeds")
+                .and_then(|e| e.get(0))
+                .map(|returned| embed_content_matches(returned, &op.embed))
+                .unwrap_or(false);
+            if matched {
                 if let Some(id) = m.get("id").and_then(|v| v.as_str()) {
                     finish_delivery(
                         path,
@@ -665,6 +677,55 @@ fn thread_name(op: &Op) -> String {
     let mut n = op.kind.clone();
     n.truncate(90);
     n
+}
+
+/// True iff every stable, caller-controlled TEXT field present in `sent` is
+/// equal in `returned`. Used by [`deliver_new_message`]'s read-back
+/// reconciliation to recognize a message this relay already POSTed, without
+/// requiring exact `serde_json::Value` equality — Discord normalizes/enriches
+/// an embed on echo (adds `"type":"rich"`, `proxy_url`, `video`, may reorder
+/// keys, etc.), so `returned == sent` never holds in production; it alters
+/// structure, not the text content we sent, so comparing just that content is
+/// distinctive enough for the crash-window use case (the op was POSTed
+/// seconds ago and we scan only the last 50 channel messages).
+///
+/// Compares: `title`, `description`, `author.name`, `footer.text`, `color`
+/// (an extra-safety check — Discord preserves the integer color verbatim),
+/// and each `fields[i].{name,value}` pair in order. A field absent from both
+/// sides counts as a match (missing == missing); deliberately does NOT
+/// compare any structural key Discord may add.
+fn embed_content_matches(returned: &Value, sent: &Value) -> bool {
+    str_field(returned, "title") == str_field(sent, "title")
+        && str_field(returned, "description") == str_field(sent, "description")
+        && nested_str_field(returned, "author", "name") == nested_str_field(sent, "author", "name")
+        && nested_str_field(returned, "footer", "text") == nested_str_field(sent, "footer", "text")
+        && returned.get("color").and_then(|c| c.as_i64())
+            == sent.get("color").and_then(|c| c.as_i64())
+        && embed_fields(returned) == embed_fields(sent)
+}
+
+fn str_field<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
+    v.get(key).and_then(|f| f.as_str())
+}
+
+fn nested_str_field<'a>(v: &'a Value, obj_key: &str, field_key: &str) -> Option<&'a str> {
+    v.get(obj_key).and_then(|o| o.get(field_key)).and_then(|f| f.as_str())
+}
+
+fn embed_fields(v: &Value) -> Vec<(&str, &str)> {
+    v.get("fields")
+        .and_then(|f| f.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|f| {
+                    (
+                        f.get("name").and_then(|n| n.as_str()).unwrap_or(""),
+                        f.get("value").and_then(|n| n.as_str()).unwrap_or(""),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Record a successful delivery. `recovered` distinguishes a read-back
@@ -1026,17 +1087,44 @@ mod tests {
         });
         let op = {
             let mut o = new_msg_op("chan", &key, 1000);
-            o.embed = json!({"title": "already posted"});
+            o.embed = json!({
+                "title": "already posted",
+                "description": "issue body text",
+                "color": 5793266,
+                "author": {"name": "engels74/zondarr"},
+                "footer": {"text": "GJC · gjc · 00:00 Berlin"},
+                "fields": [
+                    {"name": "Repo", "value": "engels74/zondarr", "inline": true}
+                ],
+            });
             o
         };
         queue::enqueue(&dir, &op).unwrap();
 
         let api = MockDiscord::new();
-        // The channel's recent-messages GET returns a message whose embeds[0]
-        // is byte-identical to our op's embed: this is our own earlier attempt.
+        // Round 7 regression: Discord does NOT echo the embed byte-identically
+        // — it normalizes/enriches it (adds "type":"rich", proxy_url on
+        // images, etc.). Simulate that here instead of returning op.embed
+        // verbatim, which is exactly what let the original exact-`==` bug
+        // ship (the old test's MockDiscord never reproduced normalization).
+        let mut discord_normalized = op.embed.clone();
+        let obj = discord_normalized.as_object_mut().unwrap();
+        obj.insert("type".to_string(), json!("rich"));
+        obj.insert("reference_id".to_string(), json!("some-internal-discord-id"));
+        obj.insert(
+            "thumbnail".to_string(),
+            json!({"proxy_url": "https://images-ext.discordapp.net/x", "width": 1, "height": 1}),
+        );
+        // Sanity: the fixture must genuinely differ from op.embed under exact
+        // equality, or this test wouldn't exercise the Round 7 fix at all
+        // (that's precisely how the old exact-`==` bug shipped unnoticed).
+        assert_ne!(
+            discord_normalized, op.embed,
+            "fixture must NOT be byte-identical to op.embed to reproduce Discord's normalization"
+        );
         api.push_list_result(Ok(vec![json!({
             "id": "already-delivered-42",
-            "embeds": [op.embed.clone()],
+            "embeds": [discord_normalized],
         })]));
         let clock = TestClock::new(1000);
         let b = bucket();

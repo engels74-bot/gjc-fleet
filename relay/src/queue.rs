@@ -59,9 +59,15 @@ pub(crate) struct Op {
     /// thread first" (handled as OpClass::ThreadCreate instead by the caller).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) target_thread_id: Option<String>,
+    /// MILLISECONDS (not the registry's seconds convention). flush.rs's
+    /// debounce window and `delivery_max_age_secs` burial check both compare
+    /// this against `Clock::now_ms()`. Constructed via `http::now_ms()`, not
+    /// `store::now_ts()` (Round 6: a seconds value here made every fresh op
+    /// look ~2000x older than it was and get buried within seconds).
     pub(crate) created_at: i64,
     #[serde(default)]
     pub(crate) attempts: u32,
+    /// MILLISECONDS, same clock as `created_at`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) next_attempt_at: Option<i64>,
 }

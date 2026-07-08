@@ -394,7 +394,15 @@ fn try_absorb(cid: &str, env: &Envelope, managed: &ManagedCtx) -> bool {
         return false;
     }
 
+    // Two clocks, two units, on purpose: `now` (seconds) feeds the registry
+    // (WorkItem.created_at/last_event_at, item-TTL prune, dedup TTL — all
+    // *_SECS constants) and must stay in seconds. `now_ms_val` feeds the
+    // durable Op's `created_at`, because flush.rs's debounce window and
+    // delivery_max_age check compare it against `Clock::now_ms()` — using the
+    // seconds value there made every fresh op look ~1.78e12ms old and get
+    // buried within seconds of being enqueued (Round 6 fix).
     let now = crate::store::now_ts();
+    let now_ms_val = now_ms();
     let key_opt = envelope_item_key(env);
 
     let item_known = {
@@ -477,7 +485,7 @@ fn try_absorb(cid: &str, env: &Envelope, managed: &ManagedCtx) -> bool {
                     OpClass::NewMessage,
                     None,
                     None,
-                    now,
+                    now_ms_val,
                 ));
             }
             Surface::EditSummary => {
@@ -497,7 +505,7 @@ fn try_absorb(cid: &str, env: &Envelope, managed: &ManagedCtx) -> bool {
                     OpClass::EditSummary,
                     Some(mid),
                     None,
-                    now,
+                    now_ms_val,
                 ));
             }
             Surface::ThreadPost => {
@@ -509,7 +517,7 @@ fn try_absorb(cid: &str, env: &Envelope, managed: &ManagedCtx) -> bool {
                     fp.clone(),
                     summary_mid.clone(),
                     thread_id.clone(),
-                    now,
+                    now_ms_val,
                 ));
             }
             Surface::EditAndThread => {
@@ -523,11 +531,18 @@ fn try_absorb(cid: &str, env: &Envelope, managed: &ManagedCtx) -> bool {
                         OpClass::EditSummary,
                         Some(mid),
                         None,
-                        now,
+                        now_ms_val,
                     ));
                 }
                 ops.push(thread_op(
-                    cid, &key, &env.kind, embed.clone(), fp.clone(), summary_mid, thread_id, now,
+                    cid,
+                    &key,
+                    &env.kind,
+                    embed.clone(),
+                    fp.clone(),
+                    summary_mid,
+                    thread_id,
+                    now_ms_val,
                 ));
             }
             Surface::Unmanaged | Surface::Drop => unreachable!("handled above"),
@@ -638,6 +653,12 @@ fn non_empty(s: &str) -> Option<String> {
     }
 }
 
+/// `created_at_ms` MUST be a millisecond timestamp (`http::now_ms()`), NOT the
+/// seconds `now` used for the registry — flush.rs's debounce window and
+/// `delivery_max_age_secs` check both compare `Op.created_at` against
+/// `Clock::now_ms()`. Passing seconds here buries every fresh op instantly
+/// (Round 6 regression: see queue.rs's and flush.rs's doc comments on
+/// `Op.created_at`).
 #[allow(clippy::too_many_arguments)]
 fn new_op(
     cid: &str,
@@ -648,7 +669,7 @@ fn new_op(
     opclass: OpClass,
     target_message_id: Option<String>,
     target_thread_id: Option<String>,
-    now: i64,
+    created_at_ms: i64,
 ) -> Op {
     Op {
         channel_id: cid.to_string(),
@@ -659,12 +680,13 @@ fn new_op(
         opclass,
         target_message_id,
         target_thread_id,
-        created_at: now,
+        created_at: created_at_ms,
         attempts: 0,
         next_attempt_at: None,
     }
 }
 
+/// See [`new_op`]'s doc comment: `created_at_ms` must be milliseconds.
 #[allow(clippy::too_many_arguments)]
 fn thread_op(
     cid: &str,
@@ -674,7 +696,7 @@ fn thread_op(
     fp: Option<String>,
     summary_mid: Option<String>,
     thread_id: Option<String>,
-    now: i64,
+    created_at_ms: i64,
 ) -> Op {
     match thread_id {
         Some(tid) => new_op(
@@ -686,7 +708,7 @@ fn thread_op(
             OpClass::ThreadPost,
             summary_mid,
             Some(tid),
-            now,
+            created_at_ms,
         ),
         None => new_op(
             cid,
@@ -697,7 +719,7 @@ fn thread_op(
             OpClass::ThreadCreate,
             summary_mid,
             None,
-            now,
+            created_at_ms,
         ),
     }
 }
@@ -938,5 +960,150 @@ mod tests {
         let v: Value = serde_json::from_slice(&out).unwrap();
         assert!(v.get("embeds").is_some());
         let _ = std::fs::remove_dir_all(&managed.cfg.state_dir);
+    }
+
+    /// Round 6 regression: `op.created_at` must be MILLISECONDS (what
+    /// flush.rs's debounce/max-age checks compare against `Clock::now_ms()`),
+    /// not the SECONDS `now` try_absorb shares with the registry. The bug
+    /// only manifested when a REAL op — created via `try_absorb`, the actual
+    /// production path — was fed into `flush_tick` against a REAL clock
+    /// (`SystemClock`): the earlier injected-`TestClock` unit tests all used
+    /// one consistent (ms) clock on both the op-creation and flush sides, so
+    /// they could never see http.rs's seconds/milliseconds mismatch. This
+    /// test wires the two real modules together and uses `SystemClock` on
+    /// purpose to catch exactly that class of cross-unit bug.
+    #[test]
+    fn freshly_absorbed_op_is_delivered_not_buried() {
+        use crate::discord::MockDiscord;
+        use crate::flush::{flush_tick, Clock, FlushCfg, SystemClock};
+
+        let managed = test_ctx(WorkitemChannels::Set(["1".to_string()].into_iter().collect()));
+        let env = Envelope {
+            kind: "github.issue-opened".to_string(),
+            repo: "o/r".to_string(),
+            number: "1".to_string(),
+            title: Some("A fresh issue".to_string()),
+            ..Envelope::default()
+        };
+
+        // Real creation path (not a hand-built Op literal).
+        assert!(try_absorb("1", &env, &managed));
+        assert_eq!(queue::queue_len(&managed.cfg.state_dir), 1);
+
+        // Sanity: the persisted op's created_at must look like "now in
+        // milliseconds" (~13 digits, within a minute of wall-clock time), not
+        // "now in seconds" (~10 digits) — the exact defect this round fixes.
+        let clock = SystemClock;
+        let now_ms = clock.now_ms();
+        let entries = queue::scan(&managed.cfg.state_dir);
+        assert_eq!(entries.len(), 1);
+        let queue::QueueEntry::Pending { op, .. } = &entries[0] else {
+            panic!("expected a pending op");
+        };
+        let age_ms = now_ms - op.created_at;
+        assert!(
+            (0..60_000).contains(&age_ms),
+            "a just-created op must be ~0ms old under a millisecond clock, got age_ms={age_ms} \
+             (created_at={}, now_ms={now_ms}); a seconds value here would show age_ms in the \
+             trillions",
+            op.created_at
+        );
+
+        // The actual regression: flush_tick against a REAL clock must DELIVER
+        // this op (MockDiscord records exactly one post), never bury it.
+        let api = MockDiscord::new();
+        managed.token_cache.set("tok".to_string());
+        let flush_cfg = FlushCfg {
+            debounce_secs: 5,
+            debounce_max_secs: 20,
+            delivery_max_age_secs: 600,
+            state_dir: managed.cfg.state_dir.clone(),
+            fault_after_post: Vec::new(),
+        };
+        let bucket = ChannelBucket::new(managed.cfg.managed_rate);
+        let events = flush_tick(
+            &managed.state,
+            &api,
+            &clock,
+            &bucket,
+            managed.token_cache.get(),
+            &flush_cfg,
+        );
+
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, crate::flush::FlushEvent::Delivered { .. })),
+            "expected a Delivered event, got {events:?}"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, crate::flush::FlushEvent::Buried { .. })),
+            "a freshly-created op must never be buried, got {events:?}"
+        );
+        let posts = api
+            .calls()
+            .iter()
+            .filter(|c| matches!(c, crate::discord::DiscordCall::PostMessage { .. }))
+            .count();
+        assert_eq!(posts, 1, "MockDiscord must record exactly one post");
+        assert_eq!(
+            queue::queue_len(&managed.cfg.state_dir),
+            0,
+            "the op must be fully delivered and cleared, not left pending or buried"
+        );
+
+        let _ = std::fs::remove_dir_all(&managed.cfg.state_dir);
+    }
+
+    /// Round 6: the dedup-map restart-recovery fallback in
+    /// `flush::apply_delivery_result` must store its timestamp in the SAME
+    /// unit as the registry's `dedup` map (seconds — `DEDUP_TTL_SECS`,
+    /// `store::now_ts()`), even though it reads it off `op.created_at`
+    /// (milliseconds). A missed conversion here would make every
+    /// restart-recovered dedup entry look ~1000x older than it is.
+    #[test]
+    fn apply_delivery_result_dedup_fallback_uses_seconds() {
+        use crate::flush::{apply_delivery_result, Clock};
+        use crate::queue::Committed;
+
+        let mut st = State::new();
+        let created_at_ms = crate::flush::SystemClock.now_ms();
+        let op = Op {
+            channel_id: "1".to_string(),
+            item_key: "o/r#1".to_string(),
+            kind: "github.issue-opened".to_string(),
+            embed: json!({}),
+            fingerprint: "iss|o/r|1|opened".to_string(),
+            opclass: OpClass::NewMessage,
+            target_message_id: None,
+            target_thread_id: None,
+            created_at: created_at_ms,
+            attempts: 0,
+            next_attempt_at: None,
+        };
+        let committed = Committed {
+            message_id: "mid1".to_string(),
+            fingerprint: op.fingerprint.clone(),
+            delivered_at: created_at_ms,
+        };
+        st.learn(WorkItem::new(
+            "o/r#1".to_string(),
+            "1".to_string(),
+            ItemType::Issue,
+            0,
+        ));
+
+        apply_delivery_result(&mut st, &op, &committed);
+
+        let seconds_now = crate::store::now_ts();
+        let stored = st.dedup[&op.fingerprint];
+        assert!(
+            (seconds_now - 60..=seconds_now).contains(&stored),
+            "dedup entry must be stored in SECONDS matching store::now_ts(), got {stored} \
+             (seconds_now={seconds_now}); storing raw milliseconds would put this ~{}x too high",
+            created_at_ms / seconds_now.max(1)
+        );
     }
 }
