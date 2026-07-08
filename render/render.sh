@@ -65,6 +65,21 @@ setup_vars() {
   CH_GJC_APPROVALS="$(ch gjc-approvals)"; export CH_GJC_APPROVALS
   CH_GJC_LAB="$(ch gjc-lab)"; export CH_GJC_LAB
   CH_GJC_EVENTS="$(ch gjc-events)"; export CH_GJC_EVENTS
+
+  # v2 managed-path knobs. Preset (low|medium|high) or explicit "<t>/<w>s"; the relay
+  # re-validates and panics on garbage, so a bad value never ships silently.
+  RELAY_MANAGED_RATE="$(cfg '.relay.managed_rate')"; RELAY_MANAGED_RATE="${RELAY_MANAGED_RATE:-medium}"
+  export RELAY_MANAGED_RATE
+  # RELAY_WORKITEM_CHANNELS: comma-joined numeric IDs of repos opting in via
+  # workitem_surface=true. EMPTY when every repo defaults false => feature fully OFF.
+  local row chname cid wic=""
+  while IFS= read -r row; do
+    [ "$(jq -r '.workitem_surface // false' <<<"$row")" = "true" ] || continue
+    chname="$(jq -r '.channel' <<<"$row")"
+    cid="$(ch "$chname")"
+    wic="${wic:+$wic,}$cid"
+  done < <(jq -c '.repos[]' <<<"$CFG_JSON")
+  RELAY_WORKITEM_CHANNELS="$wic"; export RELAY_WORKITEM_CHANNELS
 }
 
 build_monitor_blocks() {
@@ -111,6 +126,23 @@ do_render() {
   MONITOR_BLOCKS="$(build_monitor_blocks)"; export MONITOR_BLOCKS
   HOME="$FLEET_HOME" subst "$REPO_ROOT/render/templates/clawhip-config.toml.tmpl" > "$OUT/clawhip-config.toml"
   HOME="$FLEET_HOME" subst "$REPO_ROOT/render/templates/relay.env.tmpl" > "$OUT/relay.env"
+  # Append the v2 managed-path env (numeric IDs never live in the tracked template).
+  # RELAY_MANAGED_RATE always; RELAY_WORKITEM_CHANNELS empty by default => feature OFF.
+  {
+    printf 'RELAY_MANAGED_RATE=%s\n' "$RELAY_MANAGED_RATE"
+    printf 'RELAY_WORKITEM_CHANNELS=%s\n' "$RELAY_WORKITEM_CHANNELS"
+    # Numeric lab channel ID for relay-heartbeat.sh (out-of-band liveness ping).
+    # Kept OUT of the tracked template — appended here like the managed-path IDs above.
+    printf 'GJC_LAB_CHANNEL=%s\n' "$CH_GJC_LAB"
+  } >> "$OUT/relay.env"
+  # Optional per-channel debounce pins: [relay.debounce] maps a channel NAME -> seconds,
+  # rendered as RELAY_DEBOUNCE_SECS__<numeric-id>. Absent by default => no lines emitted.
+  local dname dsecs dcid
+  while IFS=$'\t' read -r dname dsecs; do
+    [ -n "$dname" ] || continue
+    dcid="$(ch "$dname")"
+    printf 'RELAY_DEBOUNCE_SECS__%s=%s\n' "$dcid" "$dsecs" >> "$OUT/relay.env"
+  done < <(jq -r '(.relay.debounce // {}) | to_entries[] | [.key, (.value|tostring)] | @tsv' <<<"$CFG_JSON")
   if [ -f "$REPO_ROOT/render/templates/gjc-bot.env.tmpl" ]; then
     HOME="$FLEET_HOME" subst "$REPO_ROOT/render/templates/gjc-bot.env.tmpl" > "$OUT/gjc-bot.env"
   fi

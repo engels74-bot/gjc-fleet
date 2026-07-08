@@ -32,6 +32,18 @@ example-repo  = "000000000000000004"
 
 [relay]
 bind = "127.0.0.1:25295"
+# Managed-traffic rate budget for the v2 work-item path. Presets:
+#   low  = 2 tokens / 5s   (conservative)
+#   medium = 3 tokens / 5s (balanced, default)
+#   high = 4 tokens / 5s   (throughput)
+# Or an explicit "<tokens>/<window>s", e.g. "3/5s" (tokens 1..=4, window >= 1s).
+managed_rate = "medium"
+
+# Optional per-channel debounce pins for the v2 managed path. Channel NAME -> seconds;
+# the renderer resolves each to RELAY_DEBOUNCE_SECS__<numeric-id>. Omit entirely (the
+# default) to use the relay's global debounce for every channel.
+# [relay.debounce]
+# example-repo = 10
 
 [brain]
 model            = "example/model-id"
@@ -65,7 +77,12 @@ clawhip_env = "~/.clawhip/clawhip.env"
 # One [[repos]] block per fleet target repo — drives the clawhip
 # [[monitors.git.repos]] blocks and the pipeline's repo auto-discovery scope.
 # channel is a NAME resolved via [discord.channels].
+#
+# workitem_surface (optional, default false): opt this repo's channel into the v2
+# managed work-item path. While every repo leaves it false (or unset), the renderer
+# emits an EMPTY RELAY_WORKITEM_CHANNELS and the managed path stays fully OFF.
 [[repos]]
 name    = "example-repo"
 github  = "example-owner/example-repo"
 channel = "example-repo"
+# workitem_surface = false

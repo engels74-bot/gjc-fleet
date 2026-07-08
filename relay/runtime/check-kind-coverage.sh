@@ -27,14 +27,64 @@ tmp="$(mktemp)"
 python3 - "$DS" "$tmp" <<'PY'
 import json, sys
 ds = json.load(open(sys.argv[1]))
-kinds = set(ds.get("kinds", {}))
+kinds_map = ds.get("kinds", {})
+kinds = set(kinds_map)
 referenced = [l.strip() for l in open(sys.argv[2]) if l.strip()]
+errors = []
+
+# 1. Coverage: every referenced kind must exist.
 missing = [k for k in referenced if k not in kinds]
 for k in missing:
-    print(f"MISSING: kind '{k}' referenced but absent from design-system.json")
+    errors.append(f"MISSING: kind '{k}' referenced but absent from design-system.json")
+
+# 2. Managed surface: every MANAGED kind (the policy.rs compiled_default set that is
+#    NOT Unmanaged) must carry a valid `surface`. Vocabulary + normalisation mirror
+#    relay/src/policy.rs surface_from_str (case/separator-insensitive).
+MANAGED = {
+    "github.issue-opened", "github.issue-commented", "github.pr-status-changed",
+    "workitem.dispatched", "github.ci-started", "github.ci-passed",
+    "github.ci-cancelled", "github.ci-failed", "workitem.merge-verdict",
+}
+VALID_SURFACES = {"newmessage", "editsummary", "threadpost",
+                  "editandthread", "unmanaged", "drop"}
+def norm(s):
+    return "".join(c for c in s.strip().lower() if c not in "_- ")
+for k in sorted(MANAGED):
+    entry = kinds_map.get(k)
+    if entry is None:
+        errors.append(f"MANAGED: kind '{k}' is missing from design-system.json")
+        continue
+    surf = entry.get("surface")
+    if not isinstance(surf, str) or not surf.strip():
+        errors.append(f"MANAGED: kind '{k}' has no `surface` (managed kinds require one)")
+    elif norm(surf) not in VALID_SURFACES:
+        errors.append(f"MANAGED: kind '{k}' surface '{surf}' is not a valid policy surface")
+
+# 3. Work-item section: must parse as an object with a non-empty ordered `facets`
+#    list, and every `facet` a kind references must be one of those ids.
+wi = ds.get("workitem")
+if not isinstance(wi, dict):
+    errors.append("WORKITEM: `workitem` section is missing or not an object")
+    facets = set()
+else:
+    fl = wi.get("facets")
+    if not isinstance(fl, list) or not fl or not all(isinstance(f, str) for f in fl):
+        errors.append("WORKITEM: `workitem.facets` must be a non-empty list of strings")
+        facets = set()
+    else:
+        facets = set(fl)
+for k, entry in kinds_map.items():
+    if isinstance(entry, dict) and "facet" in entry:
+        f = entry.get("facet")
+        if f not in facets:
+            errors.append(f"WORKITEM: kind '{k}' facet '{f}' is not in workitem.facets")
+
+for e in errors:
+    print(e)
 print(f"kind-coverage: {len(referenced)} referenced, {len(missing)} missing "
-      f"(design-system defines {len(kinds)} kinds incl. default)")
-sys.exit(1 if missing else 0)
+      f"(design-system defines {len(kinds)} kinds incl. default); "
+      f"managed-surface + workitem checks: {'OK' if not errors else 'FAIL'}")
+sys.exit(1 if errors else 0)
 PY
 rc=$?
 rm -f "$tmp"
