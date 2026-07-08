@@ -732,7 +732,21 @@ fn deliver_thread_post(
                     item.thread_id = None;
                 }
             }
-            deliver_thread_create(path, op, api, token, state, cfg, now, events);
+            // Reset the op to a fresh ThreadCreate before recreating: clear the dead
+            // target_thread_id (else deliver_thread_create's reuse guard would post into
+            // the deleted thread and 404 forever) AND flip the opclass so the newly
+            // created thread is re-registered on the item (else a later event would
+            // create a second thread). Persist so a crash mid-recreate resumes cleanly.
+            let mut recreate = op.clone();
+            recreate.target_thread_id = None;
+            recreate.opclass = OpClass::ThreadCreate;
+            if let Err(e) = queue::record_attempt(path, &recreate) {
+                log_meta(
+                    "flush-error",
+                    &format!("record_attempt(recreate-thread) failed: {e}"),
+                );
+            }
+            deliver_thread_create(path, &recreate, api, token, state, cfg, now, events);
         }
         Err(DiscordErr::Status(403)) => {
             {
@@ -1292,6 +1306,67 @@ mod tests {
         // The item recorded the created thread id (registration survives the retry).
         let st = state.lock().unwrap();
         assert_eq!(st.items[&key].thread_id.as_deref(), Some("thread-xyz"));
+        drop(st);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn thread_post_404_recreates_thread_not_infinite_loop() {
+        // Regression: a 404 on post_to_thread means the thread was deleted. The op must
+        // recreate a fresh thread (and re-register it), NOT reuse the dead
+        // target_thread_id and 404 forever — the interaction with the create-path reuse
+        // guard that would otherwise post into the deleted thread on every retry.
+        let dir = temp_dir("thread404recreate");
+        let key = item_key("o/r", "1");
+        let state = Mutex::new({
+            let mut st = State::new();
+            st.learn(WorkItem::new(
+                key.clone(),
+                "chan".to_string(),
+                ItemType::Pr,
+                0,
+            ));
+            if let Some(it) = st.items.get_mut(&key) {
+                it.summary_message_id = Some("anchor1".to_string());
+                it.thread_id = Some("dead-thread".to_string());
+            }
+            st
+        });
+        let clock = TestClock::new(1_000_000);
+        let mut op = thread_create_op("chan", &key, "anchor1", clock.now_ms());
+        op.opclass = OpClass::ThreadPost;
+        op.target_thread_id = Some("dead-thread".to_string());
+        queue::enqueue(&dir, &op).unwrap();
+
+        let api = MockDiscord::new();
+        // post(dead) -> 404, then create -> "new-thread", then post(new) -> ok.
+        api.push_id_result(Err(crate::discord::DiscordErr::Status(404)));
+        api.push_id_result(Ok("new-thread".to_string()));
+        api.push_id_result(Ok("posted-1".to_string()));
+
+        let b = bucket();
+        let c = cfg(&dir);
+        let _ = flush_tick(&state, &api, &clock, &b, Some("tok".to_string()), &c);
+
+        let calls = api.calls();
+        let creates = calls
+            .iter()
+            .filter(|c| matches!(c, crate::discord::DiscordCall::CreateThread { .. }))
+            .count();
+        assert_eq!(creates, 1, "the deleted thread is recreated exactly once");
+        assert!(
+            calls.iter().any(|c| matches!(
+                c,
+                crate::discord::DiscordCall::PostToThread { thread_id, .. } if thread_id == "new-thread"
+            )),
+            "the in-thread post targets the NEW thread, not the deleted one"
+        );
+        let st = state.lock().unwrap();
+        assert_eq!(
+            st.items[&key].thread_id.as_deref(),
+            Some("new-thread"),
+            "the recreated thread is re-registered on the item"
+        );
         drop(st);
         cleanup(&dir);
     }
