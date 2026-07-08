@@ -105,7 +105,6 @@ fn main() {
             };
             loop {
                 let token = token_cache.get();
-                let now = clock.now_ms();
                 let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
                     flush::flush_tick(&state, &api, &clock, &bucket, token, &flush_cfg)
                 }));
@@ -123,7 +122,6 @@ fn main() {
                         );
                     }
                 }
-                let _ = now;
                 flush::touch_alive(&flush_cfg.state_dir);
                 std::thread::sleep(Duration::from_millis(500));
             }

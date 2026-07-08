@@ -150,14 +150,18 @@ launch_fix() {
 }
 
 # backoff_elapsed <full> <pr> <attempts> — 0 iff enough time has passed since the last per-pr
-# attempt (or there is none yet). min wait = BACKOFF_BASE_MINS * 2^attempts minutes.
+# attempt (or there is none yet). min wait = BACKOFF_BASE_MINS * 2^min(attempts,10) minutes.
 backoff_elapsed() {
-  local full="$1" pr="$2" attempts="$3" last last_epoch now min_wait
+  local full="$1" pr="$2" attempts="$3" last last_epoch now min_wait exp
   last="$(ledger_last_ts "$LEDGER" "${full}#pr:${pr}#try")"
   [ -n "$last" ] || return 0                       # never attempted -> free to go
   last_epoch="$(date -d "$last" +%s 2>/dev/null)" || return 0
   now="$(date +%s)"
-  min_wait=$(( BACKOFF_BASE_MINS * 60 * (1 << attempts) ))
+  # Cap the shift exponent so a raised MAX_PER_PR (or an unexpectedly large attempt
+  # count) can't overflow 64-bit arithmetic and wrap min_wait negative -> back-to-back
+  # launches. 2^10 * BACKOFF_BASE_MINS is already a multi-day ceiling.
+  exp=$(( attempts > 10 ? 10 : attempts ))
+  min_wait=$(( BACKOFF_BASE_MINS * 60 * (1 << exp) ))
   [ $(( now - last_epoch )) -ge "$min_wait" ]
 }
 
