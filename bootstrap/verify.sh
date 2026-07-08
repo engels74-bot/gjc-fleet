@@ -3,8 +3,9 @@
 # on the live host). Runs a fixed set of named checks; each prints "ok: ..."
 # or "FAIL: ..." and the script exits non-zero if any check failed.
 #
-#   verify.sh [--quick]   --quick skips the canary Discord emit (check 9);
-#                          everything else still runs.
+#   verify.sh [--quick]   --quick skips the canary Discord emit (check 9) and
+#                          the work-item thread canary (check 14); everything
+#                          else still runs.
 set -uo pipefail
 
 BOOTSTRAP_DIR="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")" && pwd)"
@@ -18,6 +19,9 @@ QUICK=0
 FLEET_TOML="${FLEET_TOML:-$HOME/.config/gjc-fleet/fleet.toml}"
 SPOOL="${ISSUE_SPOOL:-$HOME/.gjc-bot/issue-spool.jsonl}"
 CLAWHIP_BIN="${CLAWHIP_BIN:-$HOME/.cargo/bin/clawhip}"
+RELAY_STATE_DIR="${RELAY_STATE_DIR:-$HOME/.gjc-relay/state}"
+RELAY_WORKITEM_CHANNELS="${RELAY_WORKITEM_CHANNELS:-}"
+GJC_LAB_CHANNEL="${GJC_LAB_CHANNEL:-}"
 
 fail=0
 ok()  { printf 'ok:   %s\n' "$*"; }
@@ -193,6 +197,67 @@ for s in alert.sh dlq-watch.sh check-kind-coverage.sh; do
     bad "$s: deployed copy missing or drifted from repo"
   fi
 done
+
+# 13. relay state sanity (always runs) ----------------------------------------------------------
+state_file="$RELAY_STATE_DIR/state.json"
+if [ -f "$state_file" ]; then
+  if jq -e '.version==2' "$state_file" >/dev/null 2>&1; then
+    ok "relay state.json: version==2"
+  else
+    bad "relay state.json: version!=2 (or unparsable)"
+  fi
+else
+  ok "relay state.json: absent (feature may be off / fresh host)"
+fi
+
+queue_dir="$RELAY_STATE_DIR/queue"
+queue_stale=0
+if [ -d "$queue_dir" ]; then
+  now="${EPOCHSECONDS:-$(date +%s)}"
+  while IFS= read -r -d '' f; do
+    m="$(stat -c '%Y' "$f" 2>/dev/null || echo "$now")"
+    if [ $((now - m)) -gt 300 ]; then queue_stale=1; break; fi
+  done < <(find "$queue_dir" -maxdepth 1 -type f -print0 2>/dev/null)
+fi
+if [ "$queue_stale" -eq 0 ]; then
+  ok "relay queue: no queued file older than 5m (empty/absent OK)"
+else
+  bad "relay queue: a queued file is older than 5m (stuck queue)"
+fi
+
+# 14. work-item thread canary (SKIPPABLE; only when the feature is on for #gjc-lab) --------------
+if [ "$QUICK" -eq 1 ]; then
+  echo "skip: work-item thread canary (--quick)"
+elif [ -z "$RELAY_WORKITEM_CHANNELS" ] || [ -z "$GJC_LAB_CHANNEL" ] || \
+     ! printf ',%s,' "$RELAY_WORKITEM_CHANNELS" | grep -qF ",$GJC_LAB_CHANNEL,"; then
+  echo "skip: work-item thread canary (RELAY_WORKITEM_CHANNELS empty or #gjc-lab not opted in)"
+elif [ -x "$CLAWHIP_BIN" ]; then
+  if "$CLAWHIP_BIN" emit gjc.canary-item --channel "$GJC_LAB_CHANNEL" --repo verify --status ok \
+       --actor verify.sh --message "fleet verify workitem canary" >/dev/null 2>&1; then
+    workitem_seen=0
+    for _ in {1..20}; do
+      if userjournal -u gjc-relay.service --since "-20s" 2>/dev/null | grep -qE '\[(edit|thread)\]'; then workitem_seen=1; break; fi
+      sleep 1
+    done
+    if [ "$workitem_seen" -eq 1 ]; then
+      ok "work-item canary: relay [edit] or [thread] line seen"
+    else
+      bad "work-item canary: no [edit]/[thread] line seen within poll window"
+    fi
+  else
+    bad "work-item canary: 'clawhip emit gjc.canary-item' failed"
+  fi
+else
+  bad "work-item canary: clawhip binary not found at $CLAWHIP_BIN"
+fi
+
+# 15. kind coverage (always runs) -----------------------------------------------------------------
+if kind_coverage_out="$(bash "$REPO_ROOT/relay/runtime/check-kind-coverage.sh" 2>&1)"; then
+  ok "check-kind-coverage.sh: exit 0"
+else
+  bad "check-kind-coverage.sh: non-zero exit"
+  printf '%s\n' "$kind_coverage_out" >&2
+fi
 
 echo "--- render.sh doctor (warnings non-fatal) ---"
 bash "$REPO_ROOT/render/render.sh" doctor || true
