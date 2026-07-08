@@ -60,7 +60,10 @@ setup_vars() {
   GH_ROOT="$(cfg '.paths.gh_root')"; GH_ROOT="${GH_ROOT:-$FLEET_HOME/github/$BOT_LOGIN/fleet}"
   FLEET_REPO="$(cfg '.paths.fleet_repo')"; FLEET_REPO="${FLEET_REPO:-$FLEET_HOME/github/$BOT_LOGIN/gjc-fleet}"
   RELAY_BIND="$(cfg '.relay.bind')"; RELAY_BIND="${RELAY_BIND:-127.0.0.1:25295}"
-  export GH_ROOT FLEET_REPO RELAY_BIND
+  # REVIEW lane coding engine: [review].engine, default "gjc" (claude = legacy).
+  # Non-numeric, so it rides in the tracked gjc-bot.env template as {{REVIEW_ENGINE}}.
+  REVIEW_ENGINE="$(cfg '.review.engine')"; REVIEW_ENGINE="${REVIEW_ENGINE:-gjc}"
+  export GH_ROOT FLEET_REPO RELAY_BIND REVIEW_ENGINE
   CH_DEFAULT="$(ch default)"; export CH_DEFAULT
   CH_GJC_APPROVALS="$(ch gjc-approvals)"; export CH_GJC_APPROVALS
   CH_GJC_LAB="$(ch gjc-lab)"; export CH_GJC_LAB

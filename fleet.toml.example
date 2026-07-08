@@ -50,6 +50,17 @@ model            = "example/model-id"
 nanogpt_base_url = "https://nano-gpt.com/api/v1/chat/completions"
 
 [review]
+# Coding engine for the REVIEW lane's handler runs. DEFAULT "gjc": the handler runs
+# through the fleet's coding engine, inheriting gjc's own configured backend/models
+# (the same engine as the gjc issue-fix lane). "claude" is the legacy fallback
+# (headless `claude -p`), which uses model_primary/model_fast below.
+#
+# A host MAY pin engine = "claude" until the cutover gate passes — >=3 handler runs
+# across >=2 repos (incl. >=1 failing-CI case) with auto-rollback armed. That is a
+# deploy-time decision, not a code change.
+engine        = "gjc"
+# Used ONLY when engine = "claude" (the legacy Claude Code path). Ignored for gjc,
+# which inherits its own backend/model configuration. Kept for the fallback.
 model_primary = "opus"
 model_fast    = "sonnet"
 
