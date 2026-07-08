@@ -78,6 +78,25 @@ max_handler_runs  = 2
 # path (same model as issue-triage / merge-gate). Inconclusive verdicts fail toward a human.
 decision_mode     = "brain"
 
+[ci_fixer]
+# Phase B-3 fix-until-green loop. A timer-driven poller (pipeline/review/ci-fixer.sh)
+# that, for a CI-RED bot-authored PR, launches ONE bounded coding-engine run to fix CI,
+# then gives up loudly toward a human when its caps are exhausted.
+#
+# DEFAULT OFF. Three independent kill switches must ALL allow a run: enabled = true
+# here, no `~/.gjc-bot/ci-fixer.disable` marker file on the host, and DRY_RUN unset
+# (DRY_RUN=1 logs intended actions and takes none). Leave enabled = false until the
+# deploy-time termination proofs (docs/40 runbook) have been walked.
+enabled           = false
+# Hard caps (bound the loop). At most max_per_sha attempts against one HEAD sha (retrying
+# an unchanged sha rarely helps), and at most max_per_pr attempts across a PR's lifetime.
+# Hitting EITHER cap is terminal: the poller escalates once to a human and stops.
+max_per_sha       = 2
+max_per_pr        = 5
+# Exponential backoff base, minutes. The minimum wait since the last attempt on a PR is
+# backoff_base_mins * 2^(attempts_so_far) — with the default 10: 10 / 20 / 40 / 80 …
+backoff_base_mins = 10
+
 [pins]
 # Upstream engines — never vendored; installed via their own channels.
 clawhip    = "0.6.11"    # cargo install clawhip --version <pin> --locked

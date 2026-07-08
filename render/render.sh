@@ -71,6 +71,15 @@ setup_vars() {
   REVIEW_POLICY_MAX_HANDLER_RUNS="$(cfg '.review.policy.max_handler_runs')"; REVIEW_POLICY_MAX_HANDLER_RUNS="${REVIEW_POLICY_MAX_HANDLER_RUNS:-2}"
   REVIEW_POLICY_DECISION_MODE="$(cfg '.review.policy.decision_mode')"; REVIEW_POLICY_DECISION_MODE="${REVIEW_POLICY_DECISION_MODE:-brain}"
   export REVIEW_AUTOMATED_AUTHORS REVIEW_POLICY_MAX_HANDLER_RUNS REVIEW_POLICY_DECISION_MODE
+  # [ci_fixer] — B-3 fix-until-green loop. Non-numeric-ID knobs, so they ride the tracked
+  # gjc-bot.env template. DEFAULT OFF: an absent block (or enabled=false) renders
+  # CI_FIXER_ENABLED=0; caps/backoff fall back to the shipped defaults. Rendered as "0"/"1"
+  # (never empty) so subst never trips its empty-value guard.
+  CI_FIXER_ENABLED=0; [ "$(cfg '.ci_fixer.enabled')" = "true" ] && CI_FIXER_ENABLED=1
+  CI_FIXER_MAX_PER_SHA="$(cfg '.ci_fixer.max_per_sha')"; CI_FIXER_MAX_PER_SHA="${CI_FIXER_MAX_PER_SHA:-2}"
+  CI_FIXER_MAX_PER_PR="$(cfg '.ci_fixer.max_per_pr')"; CI_FIXER_MAX_PER_PR="${CI_FIXER_MAX_PER_PR:-5}"
+  CI_FIXER_BACKOFF_BASE_MINS="$(cfg '.ci_fixer.backoff_base_mins')"; CI_FIXER_BACKOFF_BASE_MINS="${CI_FIXER_BACKOFF_BASE_MINS:-10}"
+  export CI_FIXER_ENABLED CI_FIXER_MAX_PER_SHA CI_FIXER_MAX_PER_PR CI_FIXER_BACKOFF_BASE_MINS
   CH_DEFAULT="$(ch default)"; export CH_DEFAULT
   CH_GJC_APPROVALS="$(ch gjc-approvals)"; export CH_GJC_APPROVALS
   CH_GJC_LAB="$(ch gjc-lab)"; export CH_GJC_LAB

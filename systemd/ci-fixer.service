@@ -1,0 +1,14 @@
+[Unit]
+Description=Fix-until-green loop — launch a bounded CI-fix run for CI-RED bot PRs (default OFF)
+Documentation=file:{{FLEET_REPO}}/docs/40-gjc-bot-automation.md
+
+[Service]
+Type=oneshot
+Environment=PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=-%h/.gjc-bot/gjc-bot.env
+ExecStart={{FLEET_REPO}}/pipeline/review/ci-fixer.sh
+Nice=15
+# The poller fire-and-forgets a detached fix run (ci-fixer-run.sh -> setsid). KillMode=process
+# keeps that run alive after this oneshot's main process exits (default control-group would
+# reap the whole cgroup).
+KillMode=process

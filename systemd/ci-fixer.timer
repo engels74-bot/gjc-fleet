@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the fix-until-green CI fixer every 10 minutes (inert while CI_FIXER_ENABLED=0)
+Documentation=file:{{FLEET_REPO}}/docs/40-gjc-bot-automation.md
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=10min
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
