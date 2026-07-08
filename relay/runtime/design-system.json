@@ -1,7 +1,8 @@
 {
- "version": 1,
- "note": "Single source of truth for GJC Discord embeds. Read by gjc-relay AND repo-bot discord-embed.sh. color is the Discord integer form of the hex in the plan taxonomy.",
+ "version": 2,
+ "note": "Single source of truth for GJC Discord embeds. Read by gjc-relay AND repo-bot discord-embed.sh. color is the Discord integer form of the hex in the plan taxonomy. version 2 adds the managed work-item taxonomy (surface/facet/tail_role/desc per managed kind + the `workitem` composer section); the relay treats version!=2 or a missing/invalid workitem section as 'v2 features inert' (belt-and-suspenders), and the whole managed path stays off until RELAY_WORKITEM_CHANNELS is non-empty.",
  "timezone": "Europe/Berlin",
+ "_surface_vocab": "surface strings match relay/src/policy.rs surface_from_str (case/separator-insensitive): new-message, edit-summary, thread-post, edit-and-thread, unmanaged, drop. Each managed kind's surface is set to its compiled-default anchor (item-known) surface, so the explicit override equals the code's steady-state decision.",
  "kinds": {
   "agent.started": {
    "color": 5793266,
@@ -21,12 +22,16 @@
   "agent.approval-requested": {
    "color": 15844367,
    "emoji": "\ud83d\udd14",
-   "title": "\ud83d\udd14 Approval requested"
+   "title": "\ud83d\udd14 Approval requested",
+   "surface": "unmanaged"
   },
   "github.issue-opened": {
    "color": 1752220,
    "emoji": "\ud83d\udce5",
-   "title": "\ud83d\udce5 Issue opened"
+   "title": "\ud83d\udce5 Issue opened",
+   "surface": "new-message",
+   "tail_role": "title",
+   "desc": "Issue #{number} opened"
   },
   "issue.dispatched": {
    "color": 3066993,
@@ -66,7 +71,11 @@
   "github.pr-status-changed": {
    "color": 10181046,
    "emoji": "\ud83d\udd00",
-   "title": "\ud83d\udd00 PR update"
+   "title": "\ud83d\udd00 PR update",
+   "surface": "edit-summary",
+   "facet": "pipeline",
+   "tail_role": "title",
+   "desc": "PR #{number} is now {status}"
   },
   "agent.blocked": {
    "color": 15844367,
@@ -91,32 +100,117 @@
   "github.issue-closed": {
    "color": 9807270,
    "emoji": "\u2705",
-   "title": "\u2705 Issue closed"
+   "title": "\u2705 Issue closed",
+   "tail_role": "title"
   },
   "github.issue-commented": {
    "color": 6122878,
    "emoji": "\ud83d\udcac",
-   "title": "\ud83d\udcac Issue comment"
+   "title": "\ud83d\udcac Issue comment",
+   "surface": "thread-post",
+   "tail_role": "title",
+   "desc": "New comment on #{number}"
   },
   "github.ci-passed": {
    "color": 3066993,
    "emoji": "\u2705",
-   "title": "\u2705 CI passed"
+   "title": "\u2705 CI passed",
+   "surface": "edit-summary",
+   "facet": "ci",
+   "desc": "CI passed ({passed}/{total})"
   },
   "github.ci-failed": {
    "color": 15158332,
    "emoji": "\u274c",
-   "title": "\u274c CI failed"
+   "title": "\u274c CI failed",
+   "surface": "edit-and-thread",
+   "facet": "ci",
+   "desc": "CI failed ({failed}/{total})"
   },
   "github.ci-started": {
    "color": 15844367,
    "emoji": "\u23f3",
-   "title": "\u23f3 CI running"
+   "title": "\u23f3 CI running",
+   "surface": "edit-summary",
+   "facet": "ci",
+   "desc": "CI running for #{number}"
   },
   "github.ci-cancelled": {
    "color": 9807270,
    "emoji": "\u23ed\ufe0f",
-   "title": "\u23ed\ufe0f CI cancelled"
+   "title": "\u23ed\ufe0f CI cancelled",
+   "surface": "edit-summary",
+   "facet": "ci",
+   "desc": "CI cancelled"
+  },
+  "heartbeat": {
+   "color": 9807270,
+   "emoji": "\ud83d\udc93",
+   "title": "\ud83d\udc93 Heartbeat",
+   "surface": "unmanaged"
+  },
+  "workitem.dispatched": {
+   "color": 3066993,
+   "emoji": "\ud83e\udd16",
+   "title": "\ud83e\udd16 Work dispatched",
+   "surface": "edit-and-thread",
+   "facet": "pipeline",
+   "desc": "Dispatched work on #{number}"
+  },
+  "workitem.review": {
+   "color": 6122878,
+   "emoji": "\ud83d\udc40",
+   "title": "\ud83d\udc40 Work-item review",
+   "surface": "unmanaged",
+   "facet": "review",
+   "desc": "Review update on #{number}"
+  },
+  "workitem.merge-verdict": {
+   "color": 15105570,
+   "emoji": "\ud83d\udee1\ufe0f",
+   "title": "\ud83d\udee1\ufe0f Merge verdict",
+   "surface": "new-message",
+   "facet": "pipeline",
+   "desc": "Merge verdict for #{number}"
+  },
+  "gjc.canary-item": {
+   "color": 6122878,
+   "emoji": "\ud83e\uddea",
+   "title": "\ud83e\uddea Canary work item",
+   "surface": "unmanaged"
+  },
+  "review-policy": {
+   "color": 15105570,
+   "emoji": "\ud83d\udcdc",
+   "title": "\ud83d\udcdc Review policy"
+  },
+  "ci-fix": {
+   "color": 15844367,
+   "emoji": "\ud83d\udd27",
+   "title": "\ud83d\udd27 CI fix"
+  },
+  "ci-fix.escalation": {
+   "color": 15158332,
+   "emoji": "\ud83d\udea8",
+   "title": "\ud83d\udea8 CI fix escalation"
   }
+ },
+ "workitem": {
+  "_comment": "Consumed by the relay summary composer (render.rs, Round 2). summary_title / thread_name / footer are {placeholder} templates over the envelope head slots (repo/number/status/...) plus the composed {title}/{state}/{time}. facets is the ordered list of per-item facet ids the summary renders in order; a kind's `facet` MUST be one of these. Inert while RELAY_WORKITEM_CHANNELS is empty.",
+  "summary_title": "{repo}#{number} \u2014 {title}",
+  "state_colors": {
+   "open": 1752220,
+   "merged": 3066993,
+   "closed": 9807270,
+   "failed": 15158332
+  },
+  "facets": [
+   "ci",
+   "review",
+   "pipeline"
+  ],
+  "footer": "GJC work item \u00b7 {state} \u00b7 updated {time} Berlin",
+  "thread_name": "{repo}#{number} {title}",
+  "auto_archive_minutes": 4320
  }
 }

@@ -10,7 +10,13 @@
 #
 # Usage:
 #   discord_embed --channel <id> --kind <kind> [--repo R] [--status S] \
-#                 [--actor A] [--branch B] [--url U] --message "free-form text"
+#                 [--actor A] [--branch B] [--url U] \
+#                 [--number N] [--stage S] [--title T] --message "free-form text"
+#
+# v2 optional slots (all additive — omit them and the emitted envelope is byte-for-byte
+# what v1 produced): --number/--stage are slug-charset head slots; --title is base64url
+# (unpadded) encoded into the t64 head slot so a free-form title with spaces/quotes rides
+# the head safely (the relay decodes t64 back to the item title).
 #
 # Protocol safety (mirrors the clawhip templates):
 #   * Free-form text (--message) goes ONLY in the post-`::` tail — quotes,
@@ -31,10 +37,16 @@ _gjc_clean_head() { printf '%s' "${1-}" | tr -cd 'A-Za-z0-9._:/-'; }
 # URLs additionally keep query/fragment characters (still whitespace-free, so the head
 # stays tokenisable) — matches the relay's URL-tolerant head validation.
 _gjc_clean_url()  { printf '%s' "${1-}" | tr -cd 'A-Za-z0-9._:/?=&#%~+,@-'; }
+# t64 values are the base64url-unpadded alphabet only ([A-Za-z0-9_-]) — matches the
+# relay's is_base64url_char validation for the t64 head slot.
+_gjc_clean_t64()  { printf '%s' "${1-}" | tr -cd 'A-Za-z0-9_-'; }
+# base64url-unpadded encode a free-form title (+/->-_ , strip '=' padding).
+_gjc_t64_encode() { printf '%s' "${1-}" | base64 -w0 2>/dev/null | tr '+/' '-_' | tr -d '='; }
 
 discord_embed() {
   # note: `estatus` not `status` — `status` is a read-only special var in zsh.
   local channel="" kind="default" repo="" estatus="" actor="" branch="" url="" message=""
+  local number="" stage="" title=""
   while [ $# -gt 0 ]; do
     case "$1" in
       --channel) channel="${2-}"; shift 2 ;;
@@ -44,6 +56,9 @@ discord_embed() {
       --actor)   actor="${2-}"; shift 2 ;;
       --branch)  branch="${2-}"; shift 2 ;;
       --url)     url="${2-}"; shift 2 ;;
+      --number)  number="${2-}"; shift 2 ;;
+      --stage)   stage="${2-}"; shift 2 ;;
+      --title)   title="${2-}"; shift 2 ;;
       --message) message="${2-}"; shift 2 ;;
       *) shift ;;
     esac
@@ -57,6 +72,12 @@ discord_embed() {
   v="$(_gjc_clean_head "$actor")";  [ -n "$v" ] && head="$head actor=$v"
   v="$(_gjc_clean_head "$branch")"; [ -n "$v" ] && head="$head branch=$v"
   v="$(_gjc_clean_url "$url")";      [ -n "$v" ] && head="$head url=$v"
+  # v2 optional slots — appended only when set, so v1 callers stay byte-identical.
+  v="$(_gjc_clean_head "$number")"; [ -n "$v" ] && head="$head number=$v"
+  v="$(_gjc_clean_head "$stage")";  [ -n "$v" ] && head="$head stage=$v"
+  if [ -n "$title" ]; then
+    v="$(_gjc_clean_t64 "$(_gjc_t64_encode "$title")")"; [ -n "$v" ] && head="$head t64=$v"
+  fi
 
   "$_GJC_CLAWHIP" send --channel "$channel" --message "$head :: $message" >/dev/null 2>&1 || return 1
 }

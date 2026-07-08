@@ -3,8 +3,9 @@
 # on the live host). Runs a fixed set of named checks; each prints "ok: ..."
 # or "FAIL: ..." and the script exits non-zero if any check failed.
 #
-#   verify.sh [--quick]   --quick skips the canary Discord emit (check 9);
-#                          everything else still runs.
+#   verify.sh [--quick]   --quick skips the canary Discord emit (check 9) and
+#                          the work-item thread canary (check 14); everything
+#                          else still runs.
 set -uo pipefail
 
 BOOTSTRAP_DIR="$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")" && pwd)"
@@ -18,6 +19,9 @@ QUICK=0
 FLEET_TOML="${FLEET_TOML:-$HOME/.config/gjc-fleet/fleet.toml}"
 SPOOL="${ISSUE_SPOOL:-$HOME/.gjc-bot/issue-spool.jsonl}"
 CLAWHIP_BIN="${CLAWHIP_BIN:-$HOME/.cargo/bin/clawhip}"
+RELAY_STATE_DIR="${RELAY_STATE_DIR:-$HOME/.gjc-relay/state}"
+RELAY_WORKITEM_CHANNELS="${RELAY_WORKITEM_CHANNELS:-}"
+GJC_LAB_CHANNEL="${GJC_LAB_CHANNEL:-}"
 
 fail=0
 ok()  { printf 'ok:   %s\n' "$*"; }
@@ -193,6 +197,85 @@ for s in alert.sh dlq-watch.sh check-kind-coverage.sh; do
     bad "$s: deployed copy missing or drifted from repo"
   fi
 done
+
+# 13. relay state sanity (always runs) ----------------------------------------------------------
+state_file="$RELAY_STATE_DIR/state.json"
+if [ -f "$state_file" ]; then
+  if jq -e '.version==2' "$state_file" >/dev/null 2>&1; then
+    ok "relay state.json: version==2"
+  else
+    bad "relay state.json: version!=2 (or unparsable)"
+  fi
+else
+  ok "relay state.json: absent (feature may be off / fresh host)"
+fi
+
+queue_dir="$RELAY_STATE_DIR/queue"
+queue_stale=0
+if [ -d "$queue_dir" ]; then
+  now="${EPOCHSECONDS:-$(date +%s)}"
+  while IFS= read -r -d '' f; do
+    m="$(stat -c '%Y' "$f" 2>/dev/null || echo "$now")"
+    if [ $((now - m)) -gt 300 ]; then queue_stale=1; break; fi
+  done < <(find "$queue_dir" -maxdepth 1 -type f -print0 2>/dev/null)
+fi
+if [ "$queue_stale" -eq 0 ]; then
+  ok "relay queue: no queued file older than 5m (empty/absent OK)"
+else
+  bad "relay queue: a queued file is older than 5m (stuck queue)"
+fi
+
+# 14. work-item thread canary (SKIPPABLE; only when the feature is on for #gjc-lab) --------------
+if [ "$QUICK" -eq 1 ]; then
+  echo "skip: work-item thread canary (--quick)"
+elif [ -z "$RELAY_WORKITEM_CHANNELS" ] || [ -z "$GJC_LAB_CHANNEL" ] || \
+     ! printf ',%s,' "$RELAY_WORKITEM_CHANNELS" | grep -qF ",$GJC_LAB_CHANNEL,"; then
+  echo "skip: work-item thread canary (RELAY_WORKITEM_CHANNELS empty or #gjc-lab not opted in)"
+elif [ -x "$CLAWHIP_BIN" ]; then
+  # Pre-flight: the gjc.canary-item route ships with the clawhip v2 route bundle
+  # (rollout step 1). Until that is deployed, the emit falls through to the default
+  # route and the relay [proxy]'s it — there are no managed-path markers to observe, so
+  # a naive run false-FAILs during the entire pre-rollout window. Detect the absent
+  # route via clawhip's own routing resolution and skip instead. Only an affirmative
+  # "routes present but none matched" skips; a broken/empty probe falls through to the
+  # live emit so a genuine managed-path regression still surfaces.
+  route_probe="$("$CLAWHIP_BIN" explain --json gjc.canary-item 2>/dev/null || true)"
+  if [ -n "$route_probe" ] && printf '%s' "$route_probe" | jq -e '.routes' >/dev/null 2>&1 \
+     && ! printf '%s' "$route_probe" | jq -e 'any(.routes[]?; .matched==true)' >/dev/null 2>&1; then
+    echo "skip: work-item thread canary (gjc.canary-item route not deployed — clawhip v2 routes are rollout step 1)"
+  elif "$CLAWHIP_BIN" emit gjc.canary-item --channel "$GJC_LAB_CHANNEL" \
+       --kind2 github.issue-opened --repo engels74/verify-canary --number 0 --status open \
+       --actor verify.sh --message "fleet verify workitem canary" >/dev/null 2>&1; then
+    # The gjc.canary-item route template is `kind={kind2} ...`: kind2 MUST be set or the
+    # relay sees an empty kind, classifies it `default`, and proxies it (no managed path).
+    # Assert [managed-accept] — the definitive "entered the managed work-item path" marker.
+    # It fires for every managed event (a [post] on the first run, a [dedup-drop] on repeats),
+    # so the fixed canary number (verify-canary#0) makes this deterministic without growing
+    # state unboundedly.
+    workitem_seen=0
+    for _ in {1..20}; do
+      if userjournal -u gjc-relay.service --since "-20s" 2>/dev/null | grep -qE '\[(managed-accept|post|edit|thread)\]'; then workitem_seen=1; break; fi
+      sleep 1
+    done
+    if [ "$workitem_seen" -eq 1 ]; then
+      ok "work-item canary: relay entered managed path ([managed-accept]/[post]/[edit]/[thread])"
+    else
+      bad "work-item canary: no managed-path line seen within poll window"
+    fi
+  else
+    bad "work-item canary: 'clawhip emit gjc.canary-item' failed"
+  fi
+else
+  bad "work-item canary: clawhip binary not found at $CLAWHIP_BIN"
+fi
+
+# 15. kind coverage (always runs) -----------------------------------------------------------------
+if kind_coverage_out="$(bash "$REPO_ROOT/relay/runtime/check-kind-coverage.sh" 2>&1)"; then
+  ok "check-kind-coverage.sh: exit 0"
+else
+  bad "check-kind-coverage.sh: non-zero exit"
+  printf '%s\n' "$kind_coverage_out" >&2
+fi
 
 echo "--- render.sh doctor (warnings non-fatal) ---"
 bash "$REPO_ROOT/render/render.sh" doctor || true

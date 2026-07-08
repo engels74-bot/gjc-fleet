@@ -45,6 +45,12 @@ maintainer_notes: >
 | **oh-my-pi / pi-*** | gajae-code's upstream lineage (`can1357/oh-my-pi`); explains `pi-natives`, `PI_ROOT`, and stale `can1357` URLs |
 | **Phase A–G** | The incremental build phases from the earlier hermes-stack build-log (now retired): jq → hermes brain → bot identity → Discord → clawhip → gjc → automation + 6-repo fan-out |
 | **Discord unification** | The 2026-07-06 evening wave (`.omc` plan/progress) that added gjc-relay, route templates, `discord_embed`, and the SOUL.md voice alignment |
+| **work-item** | The v2 relay's managed unit of Discord state: a single anchor message the relay updates in place (edits) as an entity's status changes, instead of posting one message per event. Gated by `workitem_surface`; OFF by default. [35-gjc-relay.md](35-gjc-relay.md) · [45-fleet-config.md](45-fleet-config.md) |
+| **two-phase durable commit** | The relay-v2 write discipline for a work-item: stage the intended Discord state to durable local `RELAY_STATE_DIR` state, then perform the remote edit, so a crash between the two can't lose or double-apply an update. [35-gjc-relay.md](35-gjc-relay.md) |
+| **read-back reconciliation** | On restart, the v2 relay re-reads its durable state and the live Discord anchor to reconcile the two before resuming — the recovery half of the two-phase durable commit. [35-gjc-relay.md](35-gjc-relay.md) |
+| **managed / unmanaged surface** | A **managed** surface is a channel opted into the v2 work-item path (`workitem_surface = true` → `RELAY_WORKITEM_CHANNELS`); an **unmanaged** surface is a plain post-per-event channel (the v1 behaviour, and the default for every channel). [45-fleet-config.md](45-fleet-config.md) |
+| **deferred-mark** | The HARD B-2 invariant: the one-review policy writes a PR's `#consumed` marker under the per-repo `review-<repo>.lock`, after an in-lock review-id re-check and before release — never "whenever a launch happens" — guaranteeing exactly-one consumption under racing pollers. [40-gjc-bot-automation.md](40-gjc-bot-automation.md#one-review-policy-automated-author-prs) |
+| **engine vs brain lane** | The two LLM lanes of the pipeline: the **ENGINE** lane runs coding-work invocations via `lib/engine.sh` on `[review].engine` (gjc default); the **BRAIN** lane runs no-tools VERDICT invocations on NanoGPT (`BRAIN_MODEL`). The split is the injection-safety boundary. [40-gjc-bot-automation.md](40-gjc-bot-automation.md#llm-invocation-lanes-engine-vs-brain) |
 
 ## The 2026-07-06/07 configuration waves (backup-file timeline)
 
@@ -175,7 +181,22 @@ Highest-signal first. Per-page questions are also listed on each component page.
    reboot test** — linger + user-unit boot-start has only been proven across a hot cutover, not
    a real reboot. Confirm on the next host reboot (`bootstrap/verify.sh` afterwards).
    ([70-deployment-and-operations.md](70-deployment-and-operations.md#open-questions))
-10. Smaller items tracked on component pages: `gpu_cache.json` consumer (gjc);
+10. **Thread-permission verification (pre-rollout manual check).** The v2 work-item path relies on the
+    bot holding **`CREATE_PUBLIC_THREADS`** + **`SEND_MESSAGES_IN_THREADS`**. These are **DOC-VERIFIED**
+    against the Discord permissions docs, **not** test-verified against the live guild — so before the
+    managed surface is switched on for any channel, confirm both permissions on the bot role in that
+    guild by hand. A missing permission would fail silently at first thread creation.
+11. **Digest surface DEFERRED (design guard, not a TODO).** `Surface::Digest` was **removed from v2** —
+    there is deliberately no batching/rollup surface today. If a future digest is added it MUST (a)
+    explicitly **name the event kinds it absorbs** and (b) emit a **`[digest-drop]` counter metric** so
+    "operators miss a notification" is a *checkable* condition, not a judgment call. No silent
+    drop-with-an-adjective ("minor", "noisy") is acceptable as a design.
+12. **Heartbeat-bounded quiet-period stall (recorded, bounded).** After a relay restart the
+    token-cache/flush path can stall until the first inbound traffic primes it; that window is bounded
+    to **≤120 s** by the self-priming `gjc-relay-heartbeat` timer (it manufactures a no-op inbound every
+    120 s), with the queue-age alarm (`gjc-relay-health-watch`) as the backstop if the heartbeat itself
+    fails. Not open so much as a documented invariant — flag if either unit is ever disabled.
+13. Smaller items tracked on component pages: `gpu_cache.json` consumer (gjc);
     `verification_evidence.db` purpose (hermes); `~/.gjc-relay/.omc/` contents; slack sink usage
     (clawhip); Codex-subscription rate/usage limits for the new brain model (NanoGPT fair-use
     question is moot while on Codex); unread gjc subcommand handlers
@@ -237,3 +258,11 @@ Highest-signal first. Per-page questions are also listed on each component page.
   units deleted, checkouts retired, snapshot taken; the hermes duplicate `terminal:` block was
   also deduped (shadowed early block deleted, effective config unchanged — see
   [20-hermes-agent.md](20-hermes-agent.md)).
+- 2026-07-08 (notification-overhaul pass) — New glossary rows: **work-item**, **two-phase durable
+  commit**, **read-back reconciliation**, **managed / unmanaged surface** (relay v2, cross-ref page
+  35/45), **deferred-mark** and **engine vs brain lane** (cross-ref page 40). New open-question/record
+  items: #10 thread-permission pre-rollout manual check (`CREATE_PUBLIC_THREADS` +
+  `SEND_MESSAGES_IN_THREADS` are doc-verified, not test-verified); #11 Digest surface DEFERRED design
+  guard (`Surface::Digest` removed from v2; a future digest must name absorbed kinds + emit a
+  `[digest-drop]` counter); #12 heartbeat-bounded ≤120 s quiet-period stall (self-priming heartbeat +
+  queue-age backstop). Catch-all renumbered 10 → 13.

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# gjc-dlq-watch — follows clawhip's journal for DLQ-bury events and fires an
-# out-of-band alert. This is mechanism (b) of the Phase-2 alerting: it must NOT
-# traverse clawhip or the relay (both may be down), so it curls Discord DIRECTLY.
-# clawhip emits `clawhip dlq bury: {json}` to stderr (verified discord.rs:462-466)
-# which systemd routes to the journal.
+# gjc-dlq-watch — follows clawhip's AND gjc-relay's journals for permanent-loss
+# events and fires an out-of-band alert. This is mechanism (b) of the Phase-2
+# alerting: it must NOT traverse clawhip or the relay (both may be down), so it
+# curls Discord DIRECTLY. clawhip emits `clawhip dlq bury: {json}` to stderr
+# (verified discord.rs:462-466); gjc-relay emits `gjc-relay [dead-letter] buried
+# <file> : <reason>` to stdout (relay/src/log.rs log_meta + relay/src/queue.rs
+# bury/bury_new). Both land in the journal via systemd and are followed here.
 set -uo pipefail
 
 # Numeric Discord channel ID for #gjc-approvals. Repo policy: no numeric
@@ -27,13 +29,21 @@ notify() {
 }
 
 # -n0: start at the tail (do not replay history). -o cat: message text only.
-journalctl --user -u clawhip.service -f -n0 -o cat 2>/dev/null | while IFS= read -r line; do
+# Follows BOTH units' journals merged into one stream (chronological interleave).
+journalctl --user -u clawhip.service -u gjc-relay.service -f -n0 -o cat 2>/dev/null | while IFS= read -r line; do
   case "$line" in
     *"clawhip dlq bury:"*)
       now="${EPOCHSECONDS:-$(date +%s)}"
       if [ $((now - last)) -ge "$COOLDOWN" ]; then
         last="$now"
         notify "clawhip DLQ-buried a notification (silent, permanent loss). The gjc-relay delivery path likely failed on $(hostname). Check: systemctl --user status gjc-relay ; journalctl --user -u clawhip -n 80"
+      fi
+      ;;
+    *"gjc-relay [dead-letter]"*)
+      now="${EPOCHSECONDS:-$(date +%s)}"
+      if [ $((now - last)) -ge "$COOLDOWN" ]; then
+        last="$now"
+        notify "gjc-relay dead-lettered a queued delivery (permanent loss after retries) on $(hostname). Check: systemctl --user status gjc-relay ; journalctl --user -u gjc-relay -n 80"
       fi
       ;;
   esac

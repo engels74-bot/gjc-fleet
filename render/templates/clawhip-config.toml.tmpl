@@ -43,6 +43,23 @@ sink = "discord"
 channel = "{{CH_GJC_LAB}}"
 template = "GJCEMBED1 kind=agent.approval-requested repo={repo} status={status} actor={actor} :: {message}"
 
+# --- v2 managed-path canary (reversible: delete this block + restart) --------------
+# Fully parameterized throwaway route on #gjc-lab: drives ANY managed kind through
+# the full relay path deterministically. The relay kind is taken from the {kind2}
+# key (NOT this route's event name), so a single command can exercise the whole v2
+# taxonomy. Any key left unset renders as a literal {placeholder}, which the relay
+# drops (envelope.rs is_placeholder), so only the keys you pass populate the head.
+# The free-form title rides the tail (tail_role=title) OR the base64url t64 slot.
+# Example (drives github.ci-passed end to end):
+#   clawhip emit gjc.canary-item --key kind2 github.ci-passed --key repo o/r \
+#     --key number 999 --key sha abc123 --key run 42 \
+#     --key passed 10 --key failed 0 --key total 10 --message "CI is green"
+[[routes]]
+event = "gjc.canary-item"
+sink = "discord"
+channel = "{{CH_GJC_LAB}}"
+template = "GJCEMBED1 kind={kind2} repo={repo} number={number} status={status} actor={actor} branch={branch} sha={sha} run={run} passed={passed} failed={failed} total={total} url={url} t64={t64} :: {message}"
+
 # --- Discord unification Phase 3: envelope templates per event kind. -----------------
 # All channel-less by design: router resolves route.channel -> event.channel ->
 # default, so each event keeps its own channel (per-repo monitors keep their channel;
@@ -79,8 +96,9 @@ template = "GJCEMBED1 kind=agent.blocked actor={agent_name} repo={project} :: {s
 event = "github.pr-status-changed"
 sink = "discord"
 # payload carries old_status/new_status (no plain `status`), repo, number, title, url.
-# title is free-form -> tail only; new_status/repo/url are head-safe.
-template = "GJCEMBED1 kind=github.pr-status-changed repo={repo} status={new_status} url={url} :: PR #{number} ({title}) is now {new_status}"
+# v2: number rides the head; the free-form title rides the tail (tail_role=title, since
+# clawhip templates cannot base64 t64). new_status/repo/number/url are head-safe slugs.
+template = "GJCEMBED1 kind=github.pr-status-changed repo={repo} number={number} status={new_status} url={url} :: {title}"
 
 [monitors]
 poll_interval_secs = 60
@@ -102,39 +120,43 @@ sessions = []
 # below deliberately has no `channel` — target resolution is route.channel > event.channel
 # > default, so the event's per-repo monitor channel is preserved.
 # CI events arrive pre-merged by GitHubCiBatcher (one event per run with
-# passed_count/failed_count/total_count); {number} is omitted from CI templates because
-# branch pushes carry no PR number and unresolved placeholders render literally.
+# passed_count/failed_count/total_count). v2: number/sha/run ride the head so the relay
+# can key a work item off the PR number; when a branch push carries no such field the
+# placeholder renders literally ({number}/{sha}/{run}) and the relay drops it
+# (envelope.rs is_placeholder), so an unresolved slot is a safe no-op, never noise.
+# Issue routes: number rides the head; the free-form title rides the tail
+# (tail_role=title) since clawhip templates cannot base64 t64.
 [[routes]]
 event = "github.issue-opened"
 sink = "discord"
-template = "GJCEMBED1 kind=github.issue-opened repo={repo} :: Issue #{number} opened — {title}"
+template = "GJCEMBED1 kind=github.issue-opened repo={repo} number={number} :: {title}"
 
 [[routes]]
 event = "github.issue-closed"
 sink = "discord"
-template = "GJCEMBED1 kind=github.issue-closed repo={repo} :: Issue #{number} closed — {title}"
+template = "GJCEMBED1 kind=github.issue-closed repo={repo} number={number} :: {title}"
 
 [[routes]]
 event = "github.issue-commented"
 sink = "discord"
-template = "GJCEMBED1 kind=github.issue-commented repo={repo} :: New comment on #{number} — {title}"
+template = "GJCEMBED1 kind=github.issue-commented repo={repo} number={number} :: {title}"
 
 [[routes]]
 event = "github.ci-passed"
 sink = "discord"
-template = "GJCEMBED1 kind=github.ci-passed repo={repo} url={url} :: {passed_count}/{total_count} checks passed"
+template = "GJCEMBED1 kind=github.ci-passed repo={repo} number={number} sha={sha} run={run_id} passed={passed_count} failed={failed_count} total={total_count} url={url} :: {passed_count}/{total_count} checks passed"
 
 [[routes]]
 event = "github.ci-failed"
 sink = "discord"
-template = "GJCEMBED1 kind=github.ci-failed repo={repo} url={url} :: {failed_count}/{total_count} checks failed ({passed_count} passed)"
+template = "GJCEMBED1 kind=github.ci-failed repo={repo} number={number} sha={sha} run={run_id} passed={passed_count} failed={failed_count} total={total_count} url={url} :: {failed_count}/{total_count} checks failed ({passed_count} passed)"
 
 [[routes]]
 event = "github.ci-cancelled"
 sink = "discord"
-template = "GJCEMBED1 kind=github.ci-cancelled repo={repo} url={url} :: run cancelled ({passed_count}/{total_count} had passed)"
+template = "GJCEMBED1 kind=github.ci-cancelled repo={repo} number={number} sha={sha} run={run_id} passed={passed_count} failed={failed_count} total={total_count} url={url} :: run cancelled ({passed_count}/{total_count} had passed)"
 
 [[routes]]
 event = "github.ci-started"
 sink = "discord"
-template = "GJCEMBED1 kind=github.ci-started repo={repo} url={url} :: checks in progress"
+template = "GJCEMBED1 kind=github.ci-started repo={repo} number={number} sha={sha} run={run_id} url={url} :: checks in progress"

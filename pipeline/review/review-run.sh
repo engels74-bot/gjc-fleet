@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# review-run.sh — Phase G5 launcher for the AI Code Review Handler (Claude Code,
-# headless). Fire-and-forgets the handler for one PR, holding review.lock for its
-# whole lifetime, with clawhip agent.* narration. Called by review-detector.sh.
+# review-run.sh — Phase G5 launcher for the AI Code Review Handler (headless, run
+# through the fleet's configured coding engine — gjc by default, or legacy claude;
+# see lib/engine.sh). Fire-and-forgets the handler for one PR, holding review.lock
+# for its whole lifetime, with clawhip agent.* narration. Called by review-detector.sh.
 #
 # The handler is the user's response engine, logic untouched (only the runtime-context
 # path references were updated for the fleet/ clone layout, 2026-07-07); this
@@ -20,11 +21,14 @@ REVIEW_LOCK="$STATE_DIR/review.lock"
 LOG="$STATE_DIR/review.log"
 TEMPLATE="${HANDLER_TEMPLATE:-$SCRIPTS_DIR/review/ai-code-review-handler-original.md}"
 
-CLAUDE="${CLAUDE_BIN:-$HOME/.local/bin/claude}"
 CLAWHIP="${CLAWHIP_BIN:-$HOME/.cargo/bin/clawhip}"
 GIT="${GIT_BIN:-/usr/bin/git}"
 FLOCK="${FLOCK_BIN:-/usr/bin/flock}"
-TIMEOUT="${TIMEOUT_BIN:-/usr/bin/timeout}"
+# Coding engine for the handler run: "gjc" (default; inherits gjc's backend/models)
+# or "claude" (legacy headless). Rendered from [review].engine into the pipeline env.
+# The engine binary + timeout live in lib/engine.sh; MODEL_PRIMARY is consumed there
+# ONLY on the claude path.
+REVIEW_ENGINE="${REVIEW_ENGINE:-gjc}"
 MODEL_PRIMARY="${REVIEW_MODEL_PRIMARY:-opus}"
 MODEL_FAST="${REVIEW_MODEL_FAST:-sonnet}"
 GUIDELINES="${REVIEW_GUIDELINES:-AGENTS.md}"
@@ -34,6 +38,9 @@ RUN_TIMEOUT="${REVIEW_RUN_TIMEOUT:-5400}"                        # 90 min hard c
 SELF="$(readlink -f "$0")"
 # gjc/claude/clawhip live outside the systemd PATH — own a complete one.
 export PATH="$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin${PATH:+:$PATH}"
+
+# shellcheck source=pipeline/lib/engine.sh
+source "$SCRIPTS_DIR/lib/engine.sh"
 
 mkdir -p "$STATE_DIR"; chmod 700 "$STATE_DIR" 2>/dev/null || true
 log() { printf '%s [review-run] %s\n' "$(date -Is)" "$*" >>"$LOG"; }
@@ -65,11 +72,14 @@ ensure_checkout() {
 }
 
 launcher() {
-  local repo="" pr="" rid=""
+  local repo="" pr="" rid="" suppress="0"
   while [ $# -gt 0 ]; do case "$1" in
     --repo) repo="$2"; shift 2 ;;
     --pr) pr="$2"; shift 2 ;;
     --review) rid="$2"; shift 2 ;;
+    # B-2 one-review policy: withhold Phase 7's `augment review` re-trigger, so an
+    # automated-author PR's review is consumed exactly once instead of looping.
+    --suppress-trigger) suppress="1"; shift ;;
     *) log "launch: unknown arg '$1'"; shift ;;
   esac; done
   [ -n "$repo" ] && [ -n "$pr" ] || { log "launch: --repo and --pr required"; return 2; }
@@ -86,6 +96,7 @@ launcher() {
       -e "s|^MODEL_PRIMARY: .*|MODEL_PRIMARY: \"$MODEL_PRIMARY\"|" \
       -e "s|^MODEL_FAST: .*|MODEL_FAST: \"$MODEL_FAST\"|" \
       -e "s|^NOTIFY_CHANNEL: .*|NOTIFY_CHANNEL: \"$NOTIFY_CHANNEL\"|" \
+      -e "s|^SUPPRESS_TRIGGER: .*|SUPPRESS_TRIGGER: \"$suppress\"|" \
       "$TEMPLATE" > "$filled"
   log "launching handler: $repo#$pr review=$rid dir=$dir prompt=$filled"
   setsid "$SELF" _handler "$repo" "$pr" "$dir" "$filled" </dev/null >>"$LOG" 2>&1 &
@@ -98,9 +109,9 @@ _handler() {
   exec 9>"$REVIEW_LOCK"
   if ! "$FLOCK" -n 9; then log "_handler: review.lock BUSY — aborting $repo#$pr"; rm -f "$filled"; return 1; fi
   narrate started
-  log "_handler start $repo#$pr (Claude Code headless) cwd=$dir"
+  log "_handler start $repo#$pr (engine=$REVIEW_ENGINE headless) cwd=$dir"
   local rc=0
-  ( cd "$dir" && "$TIMEOUT" "$RUN_TIMEOUT" "$CLAUDE" -p --dangerously-skip-permissions --model "$MODEL_PRIMARY" < "$filled" ) >>"$LOG" 2>&1
+  ( cd "$dir" && engine_run "$REVIEW_ENGINE" "$filled" "$RUN_TIMEOUT" ) >>"$LOG" 2>&1
   rc=$?
   if [ "$rc" -eq 0 ]; then log "_handler OK $repo#$pr"; narrate finished
   elif [ "$rc" -eq 124 ]; then log "_handler TIMEOUT ${RUN_TIMEOUT}s $repo#$pr"; narrate failed --summary "timeout"

@@ -105,8 +105,18 @@ launcher() {
     printf 'Resolve GitHub issue #%s.\n\nTitle: %s\n\nBody:\n%s\n\n' "$issue" "$title" "$body"
     printf 'Make the MINIMAL change that resolves it, following the repository AGENTS.md / conventions.\n'
     printf 'The current branch is %s. Commit your change there with a clear message, push the branch to origin with -u, then open a pull request against the default branch (%s).\n' "$branch" "$default"
-    printf 'The PR body MUST contain: a "## Summary" section; a line "Fixes #%s"; a "## Validation" section listing the EXACT commands you ran; and a footer noting the PR was opened automatically by the bot.\n' "$issue"
-    printf 'Do NOT modify unrelated files. Print the PR URL when done.\n'
+    printf 'Do NOT modify unrelated files.\n\n'
+    printf 'Write the PR body in the fleet GitHub house style (docs/46-github-house-style.md): ATX headings only, language-tagged code fences, a task-list Validation checklist, EXACTLY one attribution footer, and NO infrastructure noise (no session names, lock/spool paths, filesystem paths, tokens, or internal ids). Use EXACTLY this issue-fix skeleton, filling the <...> placeholders:\n\n'
+    printf '## Summary\n\n<one or two sentences: what was broken and the minimal change that fixes it>\n\nFixes #%s\n\n' "$issue"
+    # SC2016: the backticks below are LITERAL markdown code spans for the skeleton, not command
+    # substitution — no expansion is intended.
+    # shellcheck disable=SC2016
+    printf '## Changes\n\n- `<path/to/file>`: <what changed and why>\n\n'
+    # shellcheck disable=SC2016
+    printf '## Validation\n\n- [x] `<exact command you ran>` — <passed / result>\n\n'
+    printf 'End the PR body with EXACTLY this one attribution footer literal (nothing after it):\n\n'
+    printf -- '---\n<sub>🤖 gjc fleet · issue-fix</sub>\n\n'
+    printf 'Print the PR URL when done.\n'
   } >"$pf"
   # 6. DETACH the background execution and return immediately (fire-and-forget)
   log "launch OK repo=$repo issue=$issue branch=$branch wt=$wt session=$session"

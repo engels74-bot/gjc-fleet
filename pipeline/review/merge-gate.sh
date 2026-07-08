@@ -26,6 +26,12 @@ CLAWHIP="${CLAWHIP_BIN:-$HOME/.cargo/bin/clawhip}"
 FLOCK="${FLOCK_BIN:-/usr/bin/flock}"
 # Shared design-system embed helper (Discord unification).
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/discord-embed.sh"
+# Shared CI-state classifier (single source of truth for ci_state; used here + ci-fixer).
+# shellcheck source=pipeline/lib/gh-ci.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/gh-ci.sh"
+# Shared GitHub-Flavored-Markdown composition helpers (house style — docs/46-github-house-style.md).
+# shellcheck source=pipeline/lib/github-md.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/github-md.sh"
 GH_OWNER="${GJC_BOT_GH_OWNER:-engels74}"
 BOT="${GJC_BOT_LOGIN:-engels74-bot}"
 # REPOS auto-scales to every cloned bot repo (G7 fan-out = just clone the repos).
@@ -44,19 +50,6 @@ NANOGPT_API_KEY="$(grep '^NANOGPT_API_KEY=' "$HOME/.hermes/.env" 2>/dev/null | c
 
 gated() { "$FLOCK" "$LEDGER_LOCK" "$JQ" -e --arg k "$1" 'select(.key==$k)' "$LEDGER" >/dev/null 2>&1; }
 mark_gated() { "$FLOCK" "$LEDGER_LOCK" bash -c "$JQ -nc --arg k '$1' --arg v '$2' --arg t '$(date -Is)' '{key:\$k,verdict:\$v,ts:\$t}' >> '$LEDGER'"; }
-
-# ci_state <full_repo> <sha> -> GREEN|RED|PENDING|NONE (check-runs + commit statuses)
-ci_state() {
-  local repo="$1" sha="$2" checks statuses total red pending
-  checks="$("$GH" api "repos/$repo/commits/$sha/check-runs?per_page=100" --paginate 2>/dev/null | "$JQ" -s '[.[].check_runs[]?]' 2>/dev/null)"
-  statuses="$("$GH" api "repos/$repo/commits/$sha/status" 2>/dev/null)"
-  [ -n "$checks" ] || checks='[]'; [ -n "$statuses" ] || statuses='{"statuses":[]}'
-  total="$(( $(printf '%s' "$checks" | "$JQ" 'length' 2>/dev/null || echo 0) + $(printf '%s' "$statuses" | "$JQ" '[.statuses[]?]|length' 2>/dev/null || echo 0) ))"
-  [ "$total" -eq 0 ] && { printf 'NONE'; return; }
-  red="$("$JQ" -n --argjson c "$checks" --argjson s "$statuses" '([$c[]|select(.status=="completed" and ((.conclusion//"") as $x|($x!="success" and $x!="skipped" and $x!="neutral")))]|length)+([$s.statuses[]?|select(.state=="failure" or .state=="error")]|length)' 2>/dev/null)"
-  pending="$("$JQ" -n --argjson c "$checks" --argjson s "$statuses" '([$c[]|select((.status//"")|test("queued|in_progress|waiting|requested|pending"))]|length)+([$s.statuses[]?|select(.state=="pending")]|length)' 2>/dev/null)"
-  if [ "${red:-0}" -gt 0 ]; then printf 'RED'; elif [ "${pending:-0}" -gt 0 ]; then printf 'PENDING'; else printf 'GREEN'; fi
-}
 
 # review_verdict <full_repo> <pr> <diff> -> one line "MERGE_READY: .." / "REQUEST_CHANGES: .."
 review_verdict() {
@@ -83,11 +76,21 @@ for repo in $REPOS; do
     verdict="$(review_verdict "$full" "$pr" "$diff")"
     case "$verdict" in MERGE_READY*|REQUEST_CHANGES*) : ;; *) verdict="REQUEST_CHANGES: advisory review inconclusive — human review recommended" ;; esac
     mark_gated "$key" "$(printf '%s' "$verdict" | cut -d: -f1)"
-    msg="🔎 **Advisory merge gate** (CI green) — ${full}#${pr}\n${verdict}\n_Advisory only — no formal review, no auto-merge; a human decides._"
     if [ "$DRY_RUN" = "1" ]; then
       log "DRY_RUN would post ($full#$pr): $verdict"
     else
-      "$GH" pr comment "$pr" -R "$full" --body "$(printf '%b' "$msg")" >/dev/null 2>&1 || log "PR comment failed $full#$pr"
+      # House-style advisory comment (docs/46 skeleton (c)): gmd_h3 heading + verdict line +
+      # advisory disclaimer + a single gmd_footer. The verdict LOGIC above is unchanged; only the
+      # GitHub-facing FORMATTING is composed here via the shared github-md.sh helpers. No repo/PR
+      # ids, session names, or paths leak in — the body carries only the verdict label + its reason.
+      vlabel="${verdict%%:*}"; vreason="${verdict#*:}"; vreason="${vreason# }"
+      body="$(
+        gmd_h3 "Advisory merge gate — CI green"
+        printf '\n**%s** — %s\n\n' "$vlabel" "$vreason"
+        printf '_Advisory only — no formal review, no auto-merge; a human decides._\n'
+        gmd_footer "merge-gate"
+      )"
+      "$GH" pr comment "$pr" -R "$full" --body "$body" >/dev/null 2>&1 || log "PR comment failed $full#$pr"
       # Discord: render as a design-system embed via the relay (title supplies the 🔎).
       mstatus="$(case "$verdict" in MERGE_READY*) echo ready ;; *) echo changes-requested ;; esac)"
       discord_embed --channel "$NOTIFY_CHANNEL" --kind merge-gate.advisory --repo "$full" --status "$mstatus" \

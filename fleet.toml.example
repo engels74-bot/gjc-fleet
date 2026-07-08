@@ -32,14 +32,70 @@ example-repo  = "000000000000000004"
 
 [relay]
 bind = "127.0.0.1:25295"
+# Managed-traffic rate budget for the v2 work-item path. Presets:
+#   low  = 2 tokens / 5s   (conservative)
+#   medium = 3 tokens / 5s (balanced, default)
+#   high = 4 tokens / 5s   (throughput)
+# Or an explicit "<tokens>/<window>s", e.g. "3/5s" (tokens 1..=4, window >= 1s).
+managed_rate = "medium"
+
+# Optional per-channel debounce pins for the v2 managed path. Channel NAME -> seconds;
+# the renderer resolves each to RELAY_DEBOUNCE_SECS__<numeric-id>. Omit entirely (the
+# default) to use the relay's global debounce for every channel.
+# [relay.debounce]
+# example-repo = 10
 
 [brain]
 model            = "example/model-id"
 nanogpt_base_url = "https://nano-gpt.com/api/v1/chat/completions"
 
 [review]
+# Coding engine for the REVIEW lane's handler runs. DEFAULT "gjc": the handler runs
+# through the fleet's coding engine, inheriting gjc's own configured backend/models
+# (the same engine as the gjc issue-fix lane). "claude" is the legacy fallback
+# (headless `claude -p`), which uses model_primary/model_fast below.
+#
+# A host MAY pin engine = "claude" until the cutover gate passes — >=3 handler runs
+# across >=2 repos (incl. >=1 failing-CI case) with auto-rollback armed. That is a
+# deploy-time decision, not a code change.
+engine        = "gjc"
+# Used ONLY when engine = "claude" (the legacy Claude Code path). Ignored for gjc,
+# which inherits its own backend/model configuration. Kept for the fallback.
 model_primary = "opus"
 model_fast    = "sonnet"
+
+[review.policy]
+# One-review policy for automated-author PRs (renovate/dependabot). For a PR opened
+# by one of these logins the review lane consumes EXACTLY ONE suggestion-carrying
+# augmentcode[bot] review, then makes a bounded APPLY / DISMISS / ESCALATE decision on
+# any later review (docs/40 review-policy state machine). Human- and bot-authored PRs
+# are untouched by this lane.
+automated_authors = ["renovate[bot]", "dependabot[bot]"]
+# Hard ceiling on handler launches per PR (first consume + APPLY relaunches). Once the
+# consumed-marker count reaches this, further APPLY decisions record only, never relaunch.
+max_handler_runs  = 2
+# Decision engine for the later-review verdict. "brain" = the no-tools NanoGPT verdict
+# path (same model as issue-triage / merge-gate). Inconclusive verdicts fail toward a human.
+decision_mode     = "brain"
+
+[ci_fixer]
+# Phase B-3 fix-until-green loop. A timer-driven poller (pipeline/review/ci-fixer.sh)
+# that, for a CI-RED bot-authored PR, launches ONE bounded coding-engine run to fix CI,
+# then gives up loudly toward a human when its caps are exhausted.
+#
+# DEFAULT OFF. Three independent kill switches must ALL allow a run: enabled = true
+# here, no `~/.gjc-bot/ci-fixer.disable` marker file on the host, and DRY_RUN unset
+# (DRY_RUN=1 logs intended actions and takes none). Leave enabled = false until the
+# deploy-time termination proofs (docs/40 runbook) have been walked.
+enabled           = false
+# Hard caps (bound the loop). At most max_per_sha attempts against one HEAD sha (retrying
+# an unchanged sha rarely helps), and at most max_per_pr attempts across a PR's lifetime.
+# Hitting EITHER cap is terminal: the poller escalates once to a human and stops.
+max_per_sha       = 2
+max_per_pr        = 5
+# Exponential backoff base, minutes. The minimum wait since the last attempt on a PR is
+# backoff_base_mins * 2^(attempts_so_far) — with the default 10: 10 / 20 / 40 / 80 …
+backoff_base_mins = 10
 
 [pins]
 # Upstream engines — never vendored; installed via their own channels.
@@ -65,7 +121,12 @@ clawhip_env = "~/.clawhip/clawhip.env"
 # One [[repos]] block per fleet target repo — drives the clawhip
 # [[monitors.git.repos]] blocks and the pipeline's repo auto-discovery scope.
 # channel is a NAME resolved via [discord.channels].
+#
+# workitem_surface (optional, default false): opt this repo's channel into the v2
+# managed work-item path. While every repo leaves it false (or unset), the renderer
+# emits an EMPTY RELAY_WORKITEM_CHANNELS and the managed path stays fully OFF.
 [[repos]]
 name    = "example-repo"
 github  = "example-owner/example-repo"
 channel = "example-repo"
+# workitem_surface = false

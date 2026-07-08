@@ -60,11 +60,45 @@ setup_vars() {
   GH_ROOT="$(cfg '.paths.gh_root')"; GH_ROOT="${GH_ROOT:-$FLEET_HOME/github/$BOT_LOGIN/fleet}"
   FLEET_REPO="$(cfg '.paths.fleet_repo')"; FLEET_REPO="${FLEET_REPO:-$FLEET_HOME/github/$BOT_LOGIN/gjc-fleet}"
   RELAY_BIND="$(cfg '.relay.bind')"; RELAY_BIND="${RELAY_BIND:-127.0.0.1:25295}"
-  export GH_ROOT FLEET_REPO RELAY_BIND
+  # REVIEW lane coding engine: [review].engine, default "gjc" (claude = legacy).
+  # Non-numeric, so it rides in the tracked gjc-bot.env template as {{REVIEW_ENGINE}}.
+  REVIEW_ENGINE="$(cfg '.review.engine')"; REVIEW_ENGINE="${REVIEW_ENGINE:-gjc}"
+  export GH_ROOT FLEET_REPO RELAY_BIND REVIEW_ENGINE
+  # [review.policy] — one-review policy for automated-author PRs. Non-numeric knobs,
+  # so they ride in the tracked gjc-bot.env template. AUTHORS is space-joined (the
+  # detector splits on whitespace, glob-safely); jq defaults keep an absent block sane.
+  REVIEW_AUTOMATED_AUTHORS="$(jq -r '(.review.policy.automated_authors // ["renovate[bot]","dependabot[bot]"]) | join(" ")' <<<"$CFG_JSON")"
+  REVIEW_POLICY_MAX_HANDLER_RUNS="$(cfg '.review.policy.max_handler_runs')"; REVIEW_POLICY_MAX_HANDLER_RUNS="${REVIEW_POLICY_MAX_HANDLER_RUNS:-2}"
+  REVIEW_POLICY_DECISION_MODE="$(cfg '.review.policy.decision_mode')"; REVIEW_POLICY_DECISION_MODE="${REVIEW_POLICY_DECISION_MODE:-brain}"
+  export REVIEW_AUTOMATED_AUTHORS REVIEW_POLICY_MAX_HANDLER_RUNS REVIEW_POLICY_DECISION_MODE
+  # [ci_fixer] — B-3 fix-until-green loop. Non-numeric-ID knobs, so they ride the tracked
+  # gjc-bot.env template. DEFAULT OFF: an absent block (or enabled=false) renders
+  # CI_FIXER_ENABLED=0; caps/backoff fall back to the shipped defaults. Rendered as "0"/"1"
+  # (never empty) so subst never trips its empty-value guard.
+  CI_FIXER_ENABLED=0; [ "$(cfg '.ci_fixer.enabled')" = "true" ] && CI_FIXER_ENABLED=1
+  CI_FIXER_MAX_PER_SHA="$(cfg '.ci_fixer.max_per_sha')"; CI_FIXER_MAX_PER_SHA="${CI_FIXER_MAX_PER_SHA:-2}"
+  CI_FIXER_MAX_PER_PR="$(cfg '.ci_fixer.max_per_pr')"; CI_FIXER_MAX_PER_PR="${CI_FIXER_MAX_PER_PR:-5}"
+  CI_FIXER_BACKOFF_BASE_MINS="$(cfg '.ci_fixer.backoff_base_mins')"; CI_FIXER_BACKOFF_BASE_MINS="${CI_FIXER_BACKOFF_BASE_MINS:-10}"
+  export CI_FIXER_ENABLED CI_FIXER_MAX_PER_SHA CI_FIXER_MAX_PER_PR CI_FIXER_BACKOFF_BASE_MINS
   CH_DEFAULT="$(ch default)"; export CH_DEFAULT
   CH_GJC_APPROVALS="$(ch gjc-approvals)"; export CH_GJC_APPROVALS
   CH_GJC_LAB="$(ch gjc-lab)"; export CH_GJC_LAB
   CH_GJC_EVENTS="$(ch gjc-events)"; export CH_GJC_EVENTS
+
+  # v2 managed-path knobs. Preset (low|medium|high) or explicit "<t>/<w>s"; the relay
+  # re-validates and panics on garbage, so a bad value never ships silently.
+  RELAY_MANAGED_RATE="$(cfg '.relay.managed_rate')"; RELAY_MANAGED_RATE="${RELAY_MANAGED_RATE:-medium}"
+  export RELAY_MANAGED_RATE
+  # RELAY_WORKITEM_CHANNELS: comma-joined numeric IDs of repos opting in via
+  # workitem_surface=true. EMPTY when every repo defaults false => feature fully OFF.
+  local row chname cid wic=""
+  while IFS= read -r row; do
+    [ "$(jq -r '.workitem_surface // false' <<<"$row")" = "true" ] || continue
+    chname="$(jq -r '.channel' <<<"$row")"
+    cid="$(ch "$chname")"
+    wic="${wic:+$wic,}$cid"
+  done < <(jq -c '.repos[]' <<<"$CFG_JSON")
+  RELAY_WORKITEM_CHANNELS="$wic"; export RELAY_WORKITEM_CHANNELS
 }
 
 build_monitor_blocks() {
@@ -111,6 +145,23 @@ do_render() {
   MONITOR_BLOCKS="$(build_monitor_blocks)"; export MONITOR_BLOCKS
   HOME="$FLEET_HOME" subst "$REPO_ROOT/render/templates/clawhip-config.toml.tmpl" > "$OUT/clawhip-config.toml"
   HOME="$FLEET_HOME" subst "$REPO_ROOT/render/templates/relay.env.tmpl" > "$OUT/relay.env"
+  # Append the v2 managed-path env (numeric IDs never live in the tracked template).
+  # RELAY_MANAGED_RATE always; RELAY_WORKITEM_CHANNELS empty by default => feature OFF.
+  {
+    printf 'RELAY_MANAGED_RATE=%s\n' "$RELAY_MANAGED_RATE"
+    printf 'RELAY_WORKITEM_CHANNELS=%s\n' "$RELAY_WORKITEM_CHANNELS"
+    # Numeric lab channel ID for relay-heartbeat.sh (out-of-band liveness ping).
+    # Kept OUT of the tracked template — appended here like the managed-path IDs above.
+    printf 'GJC_LAB_CHANNEL=%s\n' "$CH_GJC_LAB"
+  } >> "$OUT/relay.env"
+  # Optional per-channel debounce pins: [relay.debounce] maps a channel NAME -> seconds,
+  # rendered as RELAY_DEBOUNCE_SECS__<numeric-id>. Absent by default => no lines emitted.
+  local dname dsecs dcid
+  while IFS=$'\t' read -r dname dsecs; do
+    [ -n "$dname" ] || continue
+    dcid="$(ch "$dname")"
+    printf 'RELAY_DEBOUNCE_SECS__%s=%s\n' "$dcid" "$dsecs" >> "$OUT/relay.env"
+  done < <(jq -r '(.relay.debounce // {}) | to_entries[] | [.key, (.value|tostring)] | @tsv' <<<"$CFG_JSON")
   if [ -f "$REPO_ROOT/render/templates/gjc-bot.env.tmpl" ]; then
     HOME="$FLEET_HOME" subst "$REPO_ROOT/render/templates/gjc-bot.env.tmpl" > "$OUT/gjc-bot.env"
   fi
