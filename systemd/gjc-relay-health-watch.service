@@ -1,0 +1,20 @@
+[Unit]
+Description=gjc-relay health watch (out-of-band alarm on stuck delivery queue / dead flush thread)
+Documentation=file:{{FLEET_REPO}}/docs/35-gjc-relay.md
+After=gjc-relay.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.gjc-relay/relay.env
+ExecStart=%h/.gjc-relay/relay-health-watch.sh
+# Lightweight hardening only, matching gjc-relay.service: this host restricts
+# unprivileged user namespaces via AppArmor, so namespace-based sandboxing
+# (ProtectSystem/ProtectHome/PrivateTmp) is deliberately ABSENT here too — see
+# gjc-relay.service for the full rationale. The directives below are all
+# honored without namespaces.
+NoNewPrivileges=true
+RestrictRealtime=true
+LockPersonality=true
+SystemCallArchitectures=native
+RestrictNamespaces=true
+MemoryDenyWriteExecute=true

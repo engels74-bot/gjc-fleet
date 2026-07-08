@@ -1,0 +1,14 @@
+[Unit]
+Description=Periodic timer for gjc-relay-heartbeat.service
+Documentation=file:{{FLEET_REPO}}/docs/35-gjc-relay.md
+
+[Timer]
+# Cadence should match RELAY_HEARTBEAT_SECS (relay.env, default 120s). systemd
+# timers cannot read EnvironmentFile values, so this is a fixed literal kept in
+# sync with the env default by convention/docs, not by mechanism.
+OnBootSec=120s
+OnUnitActiveSec=120s
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

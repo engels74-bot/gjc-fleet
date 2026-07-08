@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic timer for gjc-relay-health-watch.service
+Documentation=file:{{FLEET_REPO}}/docs/35-gjc-relay.md
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

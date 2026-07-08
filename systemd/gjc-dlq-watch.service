@@ -1,7 +1,9 @@
 [Unit]
-Description=gjc DLQ-bury watcher (out-of-band alert on clawhip silent notification loss)
+Description=gjc DLQ-bury watcher (out-of-band alert on clawhip/gjc-relay silent notification loss)
 Documentation=file:{{FLEET_REPO}}/docs/35-gjc-relay.md
-After=clawhip.service
+# Follows both units' journals (dlq-watch.sh: clawhip's `dlq bury:` and
+# gjc-relay's `[dead-letter]` markers), so it should start after both exist.
+After=clawhip.service gjc-relay.service
 
 [Service]
 Type=simple
