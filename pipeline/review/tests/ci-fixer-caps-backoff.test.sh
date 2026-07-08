@@ -149,5 +149,24 @@ echo "(e) pr #try=$pr_try  launches=$launches  'busy' logs=$deferred  (expect 0/
 [ "$launches" -eq 0 ] || fail "(e) lock-busy defer must not launch, got $launches"
 [ "$deferred" -ge 1 ] || fail "(e) expected a 'busy' defer log line"
 
-echo "PASS: caps, backoff, give-up dedup, green/pending no-op, and lock-busy defer all hold."
+# ── (f) runner fails to launch -> attempt still recorded (cap-burn), but NO "started" embed ─
+reset_ledger
+STUB_STATE="RED"
+SHA_F="f000000000000000000000000000000000000006"
+REPO_F="testrepo-f"; FULL_F="engels74/testrepo-f"   # own lock file: isolate from (e)'s holder
+cat >"$TMP/runner-fail.sh" <<'EOF'
+#!/usr/bin/env bash
+exit 3
+EOF
+chmod 755 "$TMP/runner-fail.sh"
+_saved_runner="$RUNNER"; RUNNER="$TMP/runner-fail.sh"
+consider_pr "$REPO_F" "$FULL_F" "106" "$SHA_F"
+RUNNER="$_saved_runner"
+pr_try="$(ledger_count "$LEDGER" "${FULL_F}#pr:106#try")"
+started="$(grep -c -- '--status started' "$EMBEDS" 2>/dev/null || true)"; started="${started:-0}"
+echo "(f) pr #try=$pr_try  started_embeds=$started  (expect 1/0 — cap burned, no 'started' on failed launch)"
+[ "$pr_try" -eq 1 ]  || fail "(f) failed launch should still record the attempt (cap-burn), got $pr_try"
+[ "$started" -eq 0 ] || fail "(f) failed launch must NOT emit a 'started' embed, got $started"
+
+echo "PASS: caps, backoff, give-up dedup, green/pending no-op, lock-busy defer, and failed-launch-no-embed all hold."
 exit 0

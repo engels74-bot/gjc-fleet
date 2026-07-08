@@ -141,9 +141,17 @@ launch_fix() {
   if [ "$DRY_RUN" = "1" ]; then log "DRY_RUN would launch ci-fix run + record attempt: $full#$pr sha=$sha"; return 0; fi
   ledger_mark "$LEDGER" "${full}#pr:${pr}#try"
   ledger_mark "$LEDGER" "${full}#sha:${sha}#try"
-  local attempt; attempt="$(ledger_count "$LEDGER" "${full}#pr:${pr}#try")"
+  local attempt rc; attempt="$(ledger_count "$LEDGER" "${full}#pr:${pr}#try")"
   log "launching ci-fix run: $full#$pr sha=$sha attempt=$attempt"
-  "$RUNNER" --repo "$repo" --number "$pr" --sha "$sha" --stage ci-fix || log "runner returned rc=$? for $full#$pr"
+  "$RUNNER" --repo "$repo" --number "$pr" --sha "$sha" --stage ci-fix; rc=$?
+  if [ "$rc" -ne 0 ]; then
+    # The detached run never launched (e.g. ensure_checkout failed). The attempt is
+    # still recorded above so a persistently-failing launch escalates via the give-up
+    # cap instead of retrying forever, but do NOT announce a "started" run that isn't:
+    # the operator would otherwise wait on an outcome that never arrives.
+    log "runner failed to launch for $full#$pr (rc=$rc) — skipping 'started' embed"
+    return 1
+  fi
   emit_embed "$CI_FIX_CHANNEL" --kind ci-fix --repo "$full" --status started \
     --number "$pr" --stage ci-fix --url "https://github.com/$full/pull/$pr" \
     --message "$(printf '%b' "${full}#${pr} — CI RED; launching fix attempt ${attempt}/${MAX_PER_PR}")"
