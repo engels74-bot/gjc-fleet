@@ -210,6 +210,11 @@ policy_lane() {
 }
 
 main() {
+  # K5 self single-flight: one poll pass at a time. The systemd timer can fire while a slow
+  # pass is still walking repos; a second overlapping poller would race the policy lanes.
+  # Non-blocking: on contention log + exit 0 cleanly. Inside main() so the sourced
+  # REVIEW_DETECTOR_NO_MAIN=1 test path is unaffected.
+  exec 200>"$STATE_DIR/review-detector-poll.lock"; "$FLOCK" -n 200 || { log "previous pass still running"; exit 0; }
   local repo pr author
   for repo in $REPOS; do
     while IFS=$'\t' read -r pr author; do

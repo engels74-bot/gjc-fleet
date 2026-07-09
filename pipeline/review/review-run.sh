@@ -108,6 +108,16 @@ _handler() {
   RUN_NAME="review-pr-$pr"; RUN_SESSION="review-pr-$pr"
   exec 9>"$REVIEW_LOCK"
   if ! "$FLOCK" -n 9; then log "_handler: review.lock BUSY — aborting $repo#$pr"; rm -f "$filled"; return 1; fi
+  # K1 (Fork 5 Opt B): with the GLOBAL review.lock held (fd 9), ALSO take the PER-REPO
+  # lock review-<repo>.lock BLOCKING on a distinct fd (8). This serialises the shared
+  # fleet/review/<repo> working tree against ci-fixer-run.sh's _handler, which mutates the
+  # same checkout under the SAME per-repo lock. Lock order is GLOBAL (fd 9) -> PER-REPO
+  # (fd 8); it is deadlock-free BY CONSTRUCTION because ci-fixer-run NEVER acquires the
+  # global review.lock, so the two lanes can never form a wait cycle. fd 8 stays open until
+  # _handler returns, so the per-repo lock is held across the whole engine_run mutation window.
+  local rlock="$STATE_DIR/review-${repo}.lock"
+  exec 8>"$rlock"
+  "$FLOCK" 8
   narrate started
   log "_handler start $repo#$pr (engine=$REVIEW_ENGINE headless) cwd=$dir"
   local rc=0

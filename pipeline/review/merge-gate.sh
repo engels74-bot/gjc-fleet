@@ -62,6 +62,11 @@ review_verdict() {
   printf '%s' "$resp" | "$JQ" -r '.choices[0].message.content // empty' 2>/dev/null | tr -d '\r' | grep -v '^[[:space:]]*$' | head -1
 }
 
+# K5 self single-flight: one merge-gate pass at a time. The systemd timer can fire while a
+# slow pass is still walking repos; a second overlapping poller would re-review the same PRs.
+# Non-blocking: on contention log + exit 0 cleanly (the running pass owns this tick).
+exec 200>"$STATE_DIR/merge-gate-poll.lock"; "$FLOCK" -n 200 || { log "previous pass still running"; exit 0; }
+
 for repo in $REPOS; do
   full="$GH_OWNER/$repo"
   for pr in $("$GH" pr list -R "$full" --state open --author "$BOT" --json number --jq '.[].number' 2>/dev/null); do
