@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the nightly fleet tool-update lane at 03:30 (inert while TOOL_UPDATE_ENABLED=0)
+Documentation=file:{{FLEET_REPO}}/docs/40-gjc-bot-automation.md
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

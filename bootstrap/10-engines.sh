@@ -79,7 +79,13 @@ if [ -d "$HERMES_HOME/hermes-agent" ]; then
   if [ "$current_hermes_ref" = "$HERMES_REF" ]; then
     echo "hermes-agent: already at pinned ref $HERMES_REF"
   else
-    echo "hermes-agent: deployed ref is $current_hermes_ref, pin is $HERMES_REF (checkout + reinstall is not automated here — review manually)"
+    # Hermes TRACKS LATEST via pipeline/maintenance/hermes-update.sh (health-gated,
+    # with rollback) — it is NOT ref-pinned by this bootstrap. We only report drift here
+    # and delegate the actual update; never auto-run hermes-update from here.
+    echo "hermes-agent: deployed ref is $current_hermes_ref, pin is $HERMES_REF — hermes updates are owned by pipeline/maintenance/hermes-update.sh (track-latest, health-gated)"
+    if [ "$CHECK" -ne 1 ]; then
+      echo "hermes-agent: to update, run: $REPO_ROOT/pipeline/maintenance/hermes-update.sh --apply (not auto-run from here)"
+    fi
   fi
 elif [ "$CHECK" -eq 1 ]; then
   echo "hermes-agent: would clone NousResearch/hermes-agent @ $HERMES_REF into $HERMES_HOME/hermes-agent (venv/, not .venv/)"
