@@ -92,7 +92,23 @@ the rest.
 
 ## Phase 3 — Commit + push (exactly one commit)
 
-Stage by filename and make **exactly one** commit. Conventional Commit, house-style
+Stage by filename.
+
+Before committing, run prek on the staged changes only — **never** `prek run --all-files`:
+
+```bash
+prek run
+```
+
+If prek's auto-fixers modified any staged files, re-add those SAME filenames and re-run
+`prek run`; allow at most **2** such fix-and-retry cycles. If a non-auto-fixable hook still fails
+after 2 cycles, do NOT bypass it — never `--no-verify` — instead make **no** commit and report:
+
+```text
+RESULT: UNCHANGED — <hook name> cannot be satisfied safely
+```
+
+Make **exactly one** commit. Conventional Commit, house-style
 (`docs/46-github-house-style.md`) — subject imperative, lower-case, no trailing period, ≤ 72 chars;
 no session names, lock/spool paths, `~`/`/home` paths, tokens, or internal ids:
 

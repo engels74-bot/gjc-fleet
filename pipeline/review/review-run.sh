@@ -41,6 +41,12 @@ export PATH="$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.local/bin:/home/linuxbrew/.l
 
 # shellcheck source=pipeline/lib/engine.sh
 source "$SCRIPTS_DIR/lib/engine.sh"
+# Canonical isolated-checkout helper (single source of truth for ensure_checkout; also
+# arms prek hooks in the checkout so bot commits run pre-commit/commit-msg). review-run.sh
+# formerly inlined a copy — it now shares this file with ci-fixer-run.sh. Sourced AFTER the
+# config vars above (GH_ROOT/REVIEW_ROOT/GH_OWNER/GIT/LOG) so its `:=` defaults never win.
+# shellcheck source=pipeline/review/review-checkout.sh
+source "$SCRIPTS_DIR/review/review-checkout.sh"
 
 mkdir -p "$STATE_DIR"; chmod 700 "$STATE_DIR" 2>/dev/null || true
 log() { printf '%s [review-run] %s\n' "$(date -Is)" "$*" >>"$LOG"; }
@@ -56,20 +62,6 @@ narrate() {
 }
 GH_TOKEN="$(grep '^GITHUB_TOKEN=' "$HOME/.hermes/.env" 2>/dev/null | cut -d= -f2-)"
 export GH_TOKEN
-
-# Ensure an isolated review checkout for <repo> exists; print its path.
-ensure_checkout() {
-  local repo="$1"
-  local dir="$REVIEW_ROOT/$repo"
-  if [ ! -d "$dir/.git" ]; then
-    mkdir -p "$REVIEW_ROOT"
-    "$GIT" clone --quiet "https://github.com/$GH_OWNER/$repo.git" "$dir" >>"$LOG" 2>&1 || { log "clone failed for $repo"; return 1; }
-  fi
-  # reset to a clean default state so the handler's Phase 0 starts fresh
-  "$GIT" -C "$dir" fetch --quiet origin >>"$LOG" 2>&1 || true
-  "$GIT" -C "$dir" checkout --quiet -f "$("$GIT" -C "$dir" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || echo main)" >>"$LOG" 2>&1 || true
-  printf '%s' "$dir"
-}
 
 launcher() {
   local repo="" pr="" rid="" suppress="0"

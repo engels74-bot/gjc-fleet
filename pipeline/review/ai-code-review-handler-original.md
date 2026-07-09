@@ -319,6 +319,23 @@ leakage rule — no session/lock/path/token noise in the message):
 
 ```bash
 git add <each changed file by name>        # never `git add -A`
+```
+
+Before committing, run prek on the staged changes — staged files only, **never**
+`prek run --all-files`:
+
+```bash
+prek run
+```
+
+If prek's auto-fixers modified any staged files, re-add those SAME filenames and re-run
+`prek run`; allow at most **2** such fix-and-retry cycles. If a non-auto-fixable hook still
+fails after 2 cycles, do NOT bypass it — never `--no-verify` — instead abandon that particular
+suggestion: downgrade its claim to `REJECTED` in the review output (note the hook that blocked
+it) rather than committing a hook-violating change, and drop its hunk from the diff before
+staging again.
+
+```bash
 git commit -m "fix: address code review comments (PR #${PR_ID}, iteration ${ITERATION})" \
   -m "- <one line per accepted claim>"
 git push origin HEAD:${PR_HEAD_REF}
