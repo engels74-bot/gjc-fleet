@@ -38,8 +38,10 @@ each with a distinct trust/tracking posture:
 
 `render/render.sh diff` **replaces the historical dated `.bak-*` convention** described below going
 forward — a would-be config edit is reviewed as a diff against the template + `fleet.toml`, then
-applied, rather than hand-edited with a timestamped backup alongside it. Existing `.bak-*` files
-already on disk are untouched; they remain forensic history of the pre-renderer waves. `render.sh
+applied, rather than hand-edited with a timestamped backup alongside it. Legacy `.bak-*` files from
+the pre-renderer waves are **archived** (tarred into `~/.gjc-bot/archive/`) once they are >30 days
+old **and** `render.sh diff` is clean — git history is the primary archive; the tarball is a
+short-lived forensic fallback, not a permanent on-disk pile. `render.sh
 doctor` separately checks hermes-owned files (`config.yaml` path lines, a duplicate `terminal:`
 block, cron workdirs) for drift **without** owning or rendering them — hermes's own config stays
 hand-maintained.

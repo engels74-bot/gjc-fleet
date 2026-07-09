@@ -13,7 +13,9 @@
 #
 # Config: ~/.config/gjc-fleet/fleet.toml (override: --config or $FLEET_TOML).
 # The renderer replaces the historical dated .bak-* convention: review the diff,
-# then apply. Existing .bak-* files on disk are forensic history — never deleted.
+# then apply. Legacy dated .bak-* files are archived (tarred) into ~/.gjc-bot/archive/
+# once they are >30 days old AND `render.sh diff` is clean — git history is the primary
+# archive; the tarball is a short-lived forensic fallback, not a permanent on-disk pile.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
