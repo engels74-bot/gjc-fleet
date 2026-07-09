@@ -32,8 +32,25 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/gh-ci.sh"
 # Shared GitHub-Flavored-Markdown composition helpers (house style — docs/46-github-house-style.md).
 # shellcheck source=pipeline/lib/github-md.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/github-md.sh"
+# Shared author matching (normalises `app/renovate` vs `renovate[bot]`; see the file).
+# shellcheck source=pipeline/lib/authors.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/authors.sh"
 GH_OWNER="${GJC_BOT_GH_OWNER:-engels74}"
 BOT="${GJC_BOT_LOGIN:-engels74-bot}"
+# ── Automated-author carve-out (Workstream F: division of labour) ──────────────────────────
+# renovate/dependabot PRs are the AUTOMERGE lane's domain — pipeline/review/automerge.sh merges
+# them itself once CI is green and the review policy settles. This gate stays ADVISORY and is
+# for BOT-authored PRs ONLY: a human still merges those. The `--author "$BOT"` listing below
+# ALREADY excludes automated authors, so today this changes nothing; the membership guard is
+# belt-and-braces so a FUTURE broadening of that listing can never make the gate advise on an
+# automerge-owned PR. Sentinel "-" = the empty set (rendered from `authors = []`).
+AUTOMERGE_AUTHORS="${AUTOMERGE_AUTHORS:-renovate[bot] dependabot[bot]}"
+# Delegates to author_matches (lib/authors.sh): normalises the App-login mismatch (`gh`
+# emits `app/renovate` while config lists `renovate[bot]`) and preserves the "-" empty-
+# set sentinel + glob-safe token splitting.
+is_automerge_author() {
+  author_matches "$1" "$AUTOMERGE_AUTHORS"
+}
 # REPOS auto-scales to every cloned bot repo (G7 fan-out = just clone the repos).
 list_bot_repos() { ( shopt -s nullglob; for d in "$GH_ROOT"/*/; do d="${d%/}"; b="${d##*/}"; case "$b" in review|*.gajae-code-worktrees) continue ;; esac; [ -d "$d/.git" ] && printf '%s ' "$b"; done ); }
 REPOS="${MERGE_GATE_REPOS:-$(list_bot_repos)}"
@@ -62,9 +79,17 @@ review_verdict() {
   printf '%s' "$resp" | "$JQ" -r '.choices[0].message.content // empty' 2>/dev/null | tr -d '\r' | grep -v '^[[:space:]]*$' | head -1
 }
 
+# K5 self single-flight: one merge-gate pass at a time. The systemd timer can fire while a
+# slow pass is still walking repos; a second overlapping poller would re-review the same PRs.
+# Non-blocking: on contention log + exit 0 cleanly (the running pass owns this tick).
+exec 200>"$STATE_DIR/merge-gate-poll.lock"; "$FLOCK" -n 200 || { log "previous pass still running"; exit 0; }
+
 for repo in $REPOS; do
   full="$GH_OWNER/$repo"
-  for pr in $("$GH" pr list -R "$full" --state open --author "$BOT" --json number --jq '.[].number' 2>/dev/null); do
+  while IFS=$'\t' read -r pr login; do
+    [ -n "$pr" ] || continue
+    # Carve-out: automated-author PRs belong to the automerge lane, never this advisory gate.
+    is_automerge_author "$login" && { log "skip $full#$pr: automated author ($login) — automerge lane owns it"; continue; }
     sha="$("$GH" pr view "$pr" -R "$full" --json headRefOid --jq '.headRefOid' 2>/dev/null)"
     [ -n "$sha" ] || continue
     key="$full#$pr#$sha"
@@ -97,6 +122,6 @@ for repo in $REPOS; do
         --message "$(printf '%b' "(CI green) — ${full}#${pr}\n${verdict}\n_Advisory only — no formal review, no auto-merge; a human decides._")" || true
       log "gated $full#$pr -> $verdict"
     fi
-  done
+  done < <("$GH" pr list -R "$full" --state open --author "$BOT" --json number,author --jq '.[] | [(.number|tostring), .author.login] | @tsv' 2>/dev/null)
 done
 exit 0

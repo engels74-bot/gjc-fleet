@@ -27,11 +27,12 @@ _GJC_LEDGER_SH=1
 : "${FLOCK:=${FLOCK_BIN:-/usr/bin/flock}}"
 
 # ledger_seen <file> <key> -> 0 if <key> already recorded, 1 otherwise.
-# Fixed-string membership test under the file's own lock.
+# EXACT-key membership test under the file's own lock (mirrors merge-gate.sh's gated()):
+# jq `.key==$k` so a substring can never spuriously match (e.g. "#try" vs "#try:sub").
 ledger_seen() {
   local file="$1" key="$2"
   [ -f "$file" ] || return 1
-  "$FLOCK" "${file}.lock" grep -qF -- "$key" "$file"
+  "$FLOCK" "${file}.lock" "$JQ" -e --arg k "$key" 'select(.key==$k)' "$file" >/dev/null 2>&1
 }
 
 # ledger_mark <file> <key> -> append {"key","ts"} once, under the file's own lock.

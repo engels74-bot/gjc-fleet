@@ -1,6 +1,6 @@
 <!--
 status: draft            # draft | reviewed | verified
-last_verified: 2026-07-08
+last_verified: 2026-07-09
 sources:
   - ~/github/engels74-bot/gjc-fleet/relay/ (src/{config,http,queue,flush,policy,registry,store,discord,envelope,render,log,main}.rs, Cargo.toml, runtime/)
   - ~/github/engels74-bot/gjc-fleet/relay/runtime/ (design-system.json, relay-heartbeat.sh, relay-health-watch.sh, dlq-watch.sh, alert.sh, check-kind-coverage.sh)
@@ -11,7 +11,9 @@ sources:
   - ~/.omc/plans/discord-unification-plan.md, ~/.omc/plans/notification-overhaul-plan.md
   - ~/github/engels74/gjc/clawhip/src/{dispatch.rs,discord.rs}, ~/.clawhip/{config.toml,clawhip.env}
 maintainer_notes: >
-  Edit this file in isolation. Keep headings stable; append to Changelog at the bottom.
+  Edit this file in isolation. Keep headings stable. Changelog is a single current-state
+  rebaseline entry — rewrite this page to current state rather than appending; prior history
+  lives in git.
   This page was ADDED beyond the originally prescribed doc layout: the relay is a fourth,
   locally-authored component that the earlier hermes-stack build-log (now retired) never mentioned,
   and it is in-path on every production Discord post — it needs its own page.
@@ -30,7 +32,7 @@ maintainer_notes: >
 ## Purpose
 
 **gjc-relay** is a small, locally-authored Rust reverse proxy (crate `gjc-relay` 1.0.0, now **12
-source files** totalling ~5.3k lines incl. tests under `relay/src/`; deps `tiny_http` + `ureq` +
+source files** totalling ~6.3k lines incl. tests under `relay/src/`; deps `tiny_http` + `ureq` +
 `serde`/`serde_json` + `base64` + `chrono`/`chrono-tz`) that sits **in-path** between clawhip and
 Discord. clawhip's Discord payload is hardcoded to plain `{"content": "<string>"}` in its source, so
 fleet notifications could never be rich embeds without forking clawhip. The chosen fix ("Option A" in
@@ -94,7 +96,7 @@ Runtime home (`~/.gjc-relay/`):
 | File / dir | Role |
 |---|---|
 | `gjc-relay` (ELF) | The compiled static binary the service runs (built from the repo, copied here). |
-| `design-system.json` | **Single source of truth** for embed styling. **version 2**: 31 `kind` entries (30 event kinds + `default`) → color/emoji/title, plus per-managed-kind `surface`/`facet`/`tail_role`/`desc` hints and a top-level `workitem` composer section; timezone Europe/Berlin. Also read by gjc-bot's `lib/discord-embed.sh` so both emitters render identically. The relay treats `version != 2` (or a missing `workitem` section) as "v2 features inert". |
+| `design-system.json` | **Single source of truth** for embed styling. **version 2**: 36 `kind` entries (35 event kinds + `default`, including the 5 new kinds `automerge`/`automerge.escalation`/`hermes-update`/`fleet-update`/`review.backlog`) → color/emoji/title, plus per-managed-kind `surface`/`facet`/`tail_role`/`desc` hints and a top-level `workitem` composer section; timezone Europe/Berlin. Also read by gjc-bot's `lib/discord-embed.sh` so both emitters render identically. The relay treats `version != 2` (or a missing `workitem` section) as "v2 features inert". |
 | `state/` | **New in v2.** `state.json` (+ `.tmp`, `.corrupt-<ts>` quarantine), `queue/`, `dead/`, `flush.alive`. See [State dir](#state-directory-the-durability-surface). |
 | `relay.env` | Rendered (0600). Holds **no token**. `RELAY_BIND`, `RELAY_DESIGN_SYSTEM`, `RELAY_STATE_DIR`, `RELAY_MANAGED_RATE`, `RELAY_WORKITEM_CHANNELS`, `GJC_LAB_CHANNEL`, `GJC_ALERT_CHANNEL`, optional `RELAY_DEBOUNCE_SECS__<cid>` pins. |
 | `relay-heartbeat.sh`, `relay-health-watch.sh`, `dlq-watch.sh`, `alert.sh`, `check-kind-coverage.sh` | Supervision scripts (see [Live services](#live-services-the-supervision-stack)). |
@@ -402,83 +404,10 @@ Caveat: the read-back window is `N=50` (see the reconciliation note above).
   decision of record was found.
 - Should successful managed deliveries be logged? Today post/edit/thread are silent, which makes the
   journal quiet but also makes "did it deliver?" answerable only via Discord or the queue depth.
-- `~/.gjc-relay/.omc/` contains only oh-my-claudecode `sessions/`/`state/` from dev sessions — not
-  relay-runtime-relevant (resolved 2026-07-07).
 
 ## Changelog
 
-- 2026-07-06 — Initial draft (relay deployed and verified the same day by the Discord-unification
-  wave; this page added beyond the originally prescribed layout — see maintainer_notes).
-- 2026-07-07 — Multi-envelope batch splitting added to `transform_body` (one embed per `GJCEMBED1`
-  line, +2 unit tests) after the EasyHDR RUSTSEC run exposed batched issue-closure notifications
-  rendering as plain text. design-system.json grew from 17 to 23 kinds
-  (`github.issue-closed/-commented`, `github.ci-passed/-failed/-started/-cancelled`) to back the
-  new clawhip issue/CI embed routes (see [30-clawhip.md](30-clawhip.md) changelog). Canary-verified
-  end-to-end in #gjc-lab (`kind=batch[3]:… -> 200`).
-- 2026-07-07 (later) — Verification pass: stale figures refreshed (main.rs ~640→~710 lines; unit
-  tests corrected to 17 — the earlier "23" was the kind count, not the test count; kind count 17→23
-  in the Structure table to match the changelog); post-batch-split line refs re-anchored/softened;
-  noted that `gjc-relay-alert` rarely fires by design (dlq-watch is the operative alarm).
-- 2026-07-07 (repo-move pass) — Re-verified against live source following the `gjc-architecture`
-  repo move and the `gjc-bot`→`gjc-bot-scripts` reorg. Updated all `lib/discord-embed.sh` references
-  to the new path `~/github/engels74-bot/gjc-bot-scripts/lib/discord-embed.sh` (Structure table,
-  producers list, and cross-system-connection bullet). Confirmed figures directly against source:
-  `main.rs` is exactly 708 lines (was "~710", now exact); `MAGIC`/`ALLOWED_KEYS` still at
-  `main.rs:22-23`; test module confirmed at `main.rs:518-708` (17 `#[test]` functions, unchanged);
-  `design-system.json` confirmed at exactly 23 `kind` entries (22 event kinds + `default`), unchanged
-  since the prior pass. Re-verified the full systemd supervision stack against the live unit files
-  (`gjc-relay.service`, `gjc-dlq-watch.service`, `gjc-relay-alert.service`,
-  `clawhip.service.d/10-gjc-relay.conf`) and `systemctl is-active` — all match the page's description
-  exactly, all three long-running units `active`. Confirmed `clawhip src/discord.rs:79` (api_base
-  fallback) and `~/.clawhip/clawhip.env` (`CLAWHIP_DISCORD_API_BASE=http://127.0.0.1:25295/api/v10`)
-  and `clawhip src/dispatch.rs:375` (`contents.join("\n")`) still match. Resolved the
-  `~/.gjc-relay/.omc/` open question (contains only oh-my-claudecode `sessions/`/`state/` dirs from
-  dev sessions — not relay-runtime-relevant).
-- 2026-07-07 (runbook-retirement pass) — Reframed the two references to the earlier hermes-stack
-  build-log/runbook (maintainer note + the "predated the relay" line) to past tense; that build-log
-  has been deleted and this doc set is the single source of truth. No path now points at it.
-- 2026-07-07 (fleet/ move + component rename) — Terminology only: repo-bot → **gjc-bot**;
-  cross-links updated to `40-gjc-bot-automation.md`. No relay behavior change.
-- 2026-07-07 (repo adoption) — Source moved under version control: new repo
-  **`engels74-bot/gjc-relay`** at `~/github/engels74-bot/gjc-relay` (pushed, public like its
-  siblings) holding the crate + `runtime/` copies of the authored runtime artifacts + README +
-  prek.toml. Structure section split into repo vs runtime home; new "Build → deploy" section.
-  Rebuilt from the repo (17 tests passed; binary byte-identical to the deployed one), redeployed,
-  and canary-verified end-to-end in `#gjc-lab` (`kind=agent.finished -> 200`, no DLQ burials).
-  `~/.gjc-relay/{src,Cargo.toml,Cargo.lock,target}`, the `.bak-embedbatch-*` files, and the stale
-  out-of-tree `~/.gjc-relay-build` cache removed — the runtime dir now holds only
-  binary + env + design-system + scripts. Committed alert scripts drop the numeric channel-ID
-  default (env-only, `GJC_ALERT_CHANNEL`); live copies in `~/.gjc-relay/` stay canonical.
-- 2026-07-07 (gjc-fleet monorepo + user-units migration) — The short-lived standalone
-  `engels74-bot/gjc-relay` repo is now itself archived (pointer README, history preserved via
-  merge): the crate lives on as the `relay/` subdirectory of the new `engels74-bot/gjc-fleet`
-  monorepo (`~/github/engels74-bot/gjc-fleet/relay`), alongside `pipeline/`, `render/`, `systemd/`,
-  `docs/`. Build → deploy `cd` path updated accordingly; `sudo systemctl restart` replaced by
-  `systemctl --user restart` throughout. All four relay-stack units (`gjc-relay`, `gjc-dlq-watch`,
-  `gjc-relay-alert`, the `clawhip.service.d/10-gjc-relay.conf` drop-in) moved from system-level to
-  **user-scope** systemd, rendered from `gjc-fleet/systemd/` and installed to
-  `~/.config/systemd/user/` by `render/render.sh apply --units`; `gjc-relay.service`'s hardening
-  changed as part of the same move — `ProtectSystem`/`ProtectHome`/`PrivateTmp` dropped (would
-  require unprivileged user namespaces, a start-failure risk under Ubuntu ≥24.04's AppArmor
-  restriction) in favor of `NoNewPrivileges`/`RestrictRealtime`/`LockPersonality`/
-  `SystemCallArchitectures=native`/`RestrictNamespaces`/`MemoryDenyWriteExecute`. `gjc-dlq-watch`
-  now tails the **user** journal (`journalctl --user -u clawhip.service`). Verified live with a
-  full cutover + DLQ drill: relay stopped, a doomed canary DLQ-buried, `gjc-dlq-watch` alerted
-  `#gjc-approvals` in ~6 s, relay restored, post-drill canary 200 — see
-  [Build → deploy](#build--deploy). Deployed copies in `~/.gjc-relay/` reconfirmed byte-identical
-  to `relay/runtime/` (checked by `render/render.sh doctor`).
-- 2026-07-08 (notification overhaul — relay v2, this pass) — Rewrote the page for the **stateful v2**
-  work-item path, verified against the actual `relay/` source (now 12 modules, not a single
-  `main.rs`). Added: v1→v2 gating on `RELAY_WORKITEM_CHANNELS` (empty = byte-identical v1); the module
-  layout table; the **two-phase durable commit** (`queue/<epoch_ms>-<seq>-<opclass>.json` fsync'd
-  before the synthetic 200, `.committed` fsync'd before unlink, startup scan + fold-back) and the
-  **read-back reconciliation** (`GET …?limit=50`, fingerprint-match, adopt-or-post — closes Discord's
-  no-idempotency-key window); the **supervised flush** thread (single deliverer, `catch_unwind` +
-  mutex-poison recovery, never holds the state lock across I/O, `flush.alive` liveness, edit-class
-  debounce 5s/20s → one PATCH, shared `ChannelBucket` pacing, retry/backoff, 404-recreate,
-  403-thread_disabled, `dead/` burial); the **TokenCache** (memory-only, heartbeat capture-then-drop);
-  the **state/** dir; the self-priming **heartbeat** and **health-watch** units; the `RELAY_MANAGED_RATE`
-  presets; the C1 **crash-window drill** (`RELAY_FAULT_AFTER_POST`) and reboot-replay runbook. Flush
-  delivery emits the canonical greppable labels `[post]/[edit]/[thread]/[recover]/[recreate]` +
-  suppression `[dedup-drop]/[drop]`; `GJC_LAB_CHANNEL` is rendered by `render.sh` so the heartbeat is
-  live. No numeric Discord IDs introduced.
+- 2026-07-09 (v2-current-state rewrite) — Doc set rebaselined to current state; prior history in git.
+  This page: relay size refreshed to ~6.3k lines (12 modules); design-system kind count refreshed to
+  36 (35 event kinds + `default`), covering the 5 new kinds `automerge`/`automerge.escalation`/
+  `hermes-update`/`fleet-update`/`review.backlog`.

@@ -1,6 +1,6 @@
 <!--
 status: verified         # draft | reviewed | verified
-last_verified: 2026-07-07
+last_verified: 2026-07-09
 sources:
   - ~/github/engels74-bot/gjc-fleet/pipeline/ (pipeline-stage layout: intake/ run/ review/
     maintenance/ lib/ — the flat ~/scripts/repo-bot/ path and the standalone gjc-bot-scripts
@@ -11,11 +11,13 @@ sources:
   - ~/.gjc-bot/ (ledgers, locks, logs, gjc-bot.env — runtime evidence)
   - ~/github/engels74-bot/gjc-fleet/render/ (renderer that produces gjc-bot.env from fleet.toml)
 maintainer_notes: >
-  Edit this file in isolation. Keep headings stable; append to Changelog at the bottom.
-  Line citations refer to the scripts in gjc-fleet/pipeline/ as re-verified 2026-07-07
-  (post the pipeline-stage reorg + self-locating SCRIPTS_DIR fix, and post the monorepo +
-  user-units migration later the same day). Paths are given relative
-  to the repo root ~/github/engels74-bot/gjc-fleet/, i.e. inside its pipeline/ subdir.
+  Edit this file in isolation. Keep headings stable. Changelog is a single current-state
+  rebaseline entry — rewrite this page to current state rather than appending; prior history
+  lives in git. Line citations refer to the scripts in gjc-fleet/pipeline/ as re-verified
+  2026-07-09 (post the drift fold-back + automation-upgrade effort: engine cutover to gjc,
+  the K concurrency hardening, the D force-push re-arm, the automerge + fleet-update lanes,
+  and the janitor tmux-reaper). Paths are given relative to the repo root
+  ~/github/engels74-bot/gjc-fleet/, i.e. inside its pipeline/ subdir.
 -->
 
 # gjc-bot — the shell glue pipeline
@@ -37,8 +39,8 @@ bot for six of engels74's application repos. The scripts are grouped by **pipeli
 |---|---|
 | `intake/` | `issue-spool-adapter.sh`, `issue-triage-fetch.sh` |
 | `run/` | `gjc-run.sh`, `gjc-reap.sh` |
-| `review/` | `review-detector.sh`, `review-run.sh`, `merge-gate.sh`, `review-policy-decide.sh` (B-2 one-review policy), `ci-fixer.sh` + `ci-fixer-run.sh` (B-3 fix-until-green, default OFF), `review-checkout.sh` (shared isolated-checkout helper), `ai-code-review-handler-original.md` + `ci-fix-handler.md` (templates), `tests/` (offline guardrail proofs) |
-| `maintenance/` | `gjc-worktree-janitor.sh`, `stale-branches.sh` |
+| `review/` | `review-detector.sh`, `review-run.sh`, `merge-gate.sh`, `review-policy-decide.sh` (B-2 one-review policy), `ci-fixer.sh` + `ci-fixer-run.sh` (B-3 fix-until-green, default OFF), `automerge.sh` (F automerge lane, default OFF), `review-checkout.sh` (shared isolated-checkout helper), `review-shared.sh` (shared review helpers: `latest_suggestion_review`/`head_contains`/`pr_head_sha`), `ai-code-review-handler-original.md` + `ci-fix-handler.md` (templates), `tests/` (offline guardrail proofs) |
+| `maintenance/` | `gjc-worktree-janitor.sh`, `stale-branches.sh`, `fleet-update.sh` (G nightly orchestrator, default OFF), `tool-update.sh` (headless update-ai port), `hermes-update.sh` (track-latest hermes updater) |
 | `lib/` | `discord-embed.sh`, `engine.sh` (coding-engine dispatch), `gh-ci.sh` (CI-state classifier), `ledger.sh` (JSONL dedup/caps/backoff), `github-md.sh` (house-style GFM), `userctl.sh` |
 
 The unit **templates** (`.service` / `.timer` / `.path`) that used to live in this repo's own
@@ -51,9 +53,13 @@ this pipeline.
 > script resolves its own repo root at runtime (see [Self-locating scripts](#self-locating-scripts)).
 
 Two trigger fabrics drive it: **clawhip** (polls GitHub, emits events, writes the issue spool) and
-**systemd** (path unit + timers that run the glue). Heavy lifting is shelled out to **`gjc`** (the
-coding agent) and **headless `claude`** (the review handler); clawhip (through gjc-relay) is the
-Discord narration bus. Hermes participates only via two cron jobs (through real-file wrappers).
+**systemd** (path unit + timers that run the glue). Coding-work is shelled out through
+`lib/engine.sh` `engine_run`, which dispatches on `[review].engine` (rendered `REVIEW_ENGINE`) —
+**gjc** post-cutover (the active default; `gjc -p --no-pty "@prompt"`, inheriting gjc's own
+Codex backend) with **headless `claude`** retained as a selectable legacy fallback engine.
+Verdict-only work (triage, merge-gate, policy DECIDE) stays on the no-tools NanoGPT **brain** path.
+clawhip (through gjc-relay) is the Discord narration bus. Hermes participates only via two cron
+jobs (through real-file wrappers).
 
 Conventions used below: `STATE_DIR` = `~/.gjc-bot` (renamed from `~/.repo-bot` on
 2026-07-07, together with the `GJC_BOT_*` → `GJC_BOT_*` env-prefix rename, so the on-disk
@@ -104,12 +110,20 @@ GitHub issue opened
             │     caps + backoff + per-repo lock → ci-fixer-run.sh (engine_run) fixes CI;
             │     caps exhausted → give up once → #gjc-approvals
             │
-            └─ merge-gate.sh (10 min timer) ── CI green? → LLM verdict (no tools)
+            ├─ automerge.sh (10 min timer, DEFAULT OFF, canary pending) ── automated-author PR,
+            │     CI green + review policy settled? → synchronous OLDEST-FIRST squash-merge via
+            │     gh pr merge --match-head-commit (per-repo lock; in-lock head + CI re-check);
+            │     else defer. NONE/RED never merge; UNKNOWN/PENDING defer.
+            │
+            └─ merge-gate.sh (10 min timer, BOT-authored only) ── CI green? → LLM verdict (no tools)
                      → PR comment MERGE_READY / REQUEST_CHANGES + Discord embed
-                     → a HUMAN merges
+                     → a HUMAN merges  (automated-author PRs carved out → automerge lane owns them)
 
-Cleanup lanes: gjc-worktree-janitor (2 min timer) · gjc-reap.sh (manual) ·
+Cleanup lanes: gjc-worktree-janitor (2 min timer; + age-based coordinator tmux-reaper & log-prune) ·
+               gjc-reap.sh (wired into the janitor's tmux sweep — no longer manual-only) ·
                stale-branches.sh (hermes cron, report-only) · issue-triage-fetch.sh (hermes cron, read-only)
+Nightly:      fleet-update.sh (03:30 timer, DEFAULT OFF) ── quiesce → tool-update → hermes-update →
+              release → verify.sh → one summary embed
 ```
 
 ## Script-by-script
@@ -222,23 +236,45 @@ merge-gate does not define `SCRIPTS_DIR`; it sources `lib/discord-embed.sh`, `li
 
 ### maintenance/gjc-worktree-janitor.sh
 
-Crash-net for orphaned launch worktrees (`maintenance/gjc-worktree-janitor.sh:1-159`); timer every
+Crash-net for orphaned launch worktrees (`maintenance/gjc-worktree-janitor.sh:1-316`); timer every
 2 min, plus called inline by `gjc-run.sh launch` and `gjc-reap.sh`. Takes `gjc.lock` for the whole
-pass (`:124-128`) — if a live run holds it, the janitor skips entirely (closes the timer race).
-Builds an occupancy set from `/proc/<pid>/cwd` scans + `tmux list-panes` (`:56-65`). Removes a
-worktree only when **all** hold: under `<repo>.gajae-code-worktrees/*`; on a branch (detached-HEAD
-`main-<hash>` worktrees are left for gjc's interactive lane to reuse); no live occupant; mtime age
-≥ `GRACE_SECONDS=600` (`:91-109`). `DRY_RUN=1` supported. Live log confirms correct
-skip-detached-HEAD behavior.
+pass (`main`, `:270-277`) — if a live run holds it, the janitor skips entirely (closes the timer
+race). Builds an occupancy set from `/proc/<pid>/cwd` scans + `tmux list-panes` (`occupied_paths`,
+`:79-88`). Removes a worktree only when **all** hold: under `<repo>.gajae-code-worktrees/*`; on a
+branch (detached-HEAD `main-<hash>` worktrees are left for gjc's interactive lane to reuse); no live
+occupant; mtime age ≥ `GRACE_SECONDS=600` (`evaluate_worktree`, `:106-143`). `DRY_RUN=1` supported.
+Live log confirms correct skip-detached-HEAD behavior.
+
+**Coordinator tmux reaper (Workstream I).** BEFORE the worktree pass, `reap_tmux_sessions`
+(`:220-237`) runs an age-based sweep of `gjc-coordinator-*` tmux sessions. For each,
+`consider_tmux_session` (`:172-218`) reaps it **iff** its coordinator-mcp state file has
+`state ∈ {completed,stale}` AND `live == false` AND `updated_at` older than `JANITOR_TMUX_GRACE_SECONDS`
+(`[janitor].tmux_grace_mins`, default 30 min); a session with NO state file is reaped only past a
+~24h fallback (`JANITOR_TMUX_NOSTATE_SECONDS`). **Schema-guard fail-safe:** any missing/null/
+unparseable `state`/`live`/`updated_at` field, or an unreadable state file, SKIPs (`:196-199`) — a
+future hermes schema change defers rather than mis-reaps. The reap itself calls `gjc-reap.sh` with
+`JANITOR_BIN=/bin/true` (`do_tmux_reap`, `:158-167`) so its closing janitor pass does not recurse.
+Gated on `[janitor].tmux_reap_enabled` (rendered `JANITOR_TMUX_REAP_ENABLED`, **default OFF** — fully
+inert unless `=1`) + `DRY_RUN`. This is what **wires** the formerly-standalone `gjc-reap.sh` into a
+trigger (resolving the old "reaper is unwired" question).
+
+**Log-prune (K3).** After the worktree pass, `prune_logs` (`:239-268`) deletes per-run engine logs
+under `~/.gjc-bot/logs/*-pr*-*.log` older than `JANITOR_LOG_RETENTION_DAYS` (default 14) and size-caps
+the shared lane logs (`review.log`/`ci-fixer.log`/`merge-gate.log`) to the last
+`JANITOR_LANE_LOG_KEEP_LINES` lines once they pass `JANITOR_LANE_LOG_MAX_BYTES` (default 10 MiB),
+truncating in place so live appenders keep their inode. Conservative + non-fatal.
 
 ### run/gjc-reap.sh
 
 Kills a hung gjc tmux session's **entire pane process tree** (PID-based BFS via `pgrep -P`, never
-pattern matching, `run/gjc-reap.sh:37-46`), leaf-first TERM → `tmux kill-session` → KILL. Rationale:
-killing only the tmux session orphans the in-session wrapper holding `gjc.lock`; killing the tree
-closes the held fd and releases the lock (`:5-9`). Ends with a janitor pass
-(`JANITOR=$SCRIPTS_DIR/maintenance/gjc-worktree-janitor.sh`, `:21`). **Currently unwired**
-— see Discrepancies.
+pattern matching), leaf-first TERM → `tmux kill-session` → KILL. Rationale: killing only the tmux
+session orphans the in-session wrapper holding `gjc.lock`; killing the tree closes the held fd and
+releases the lock. Ends with a janitor pass
+(`JANITOR=$SCRIPTS_DIR/maintenance/gjc-worktree-janitor.sh`). **Now wired** into
+`gjc-worktree-janitor.sh`'s age-based coordinator tmux sweep (Workstream I — see
+[maintenance/gjc-worktree-janitor.sh](#maintenancegjc-worktree-janitorsh)); still usable
+manually, and still the second stop (paired with `_exec`'s own `timeout`) for a hung run. The janitor
+re-invokes it with `JANITOR_BIN=/bin/true` so the closing janitor pass does not recurse.
 
 ### intake/issue-triage-fetch.sh / maintenance/stale-branches.sh
 
@@ -268,15 +304,22 @@ checkout, no repo mutation beyond the one PR comment.
 
 ### review/ci-fixer.sh
 
-The **fix-until-green poller** — bounded and guard-railed, **DEFAULT OFF** (`review/ci-fixer.sh:1-219`).
-Timer every 10 min. Three kill switches gate every run (`gate_open`, `:96-100`; see
-[Fix-until-green](#fix-until-green-ci-fixer)). **Bot-authored PRs ONLY** (`gh pr list --author "$BOT"`,
-`:207`). Per open bot PR on its HEAD sha, `consider_pr` (`:167-200`) classifies via the shared
-`ci_state`: GREEN/PENDING/NONE → skip; RED → check caps (`max_per_sha=2`, `max_per_pr=5`, `:179-183`),
-exponential backoff (`backoff_base_mins * 2^attempts`, `:154-162,186-189`), a non-blocking
-`review-<repo>.lock` pre-check (`:193-197`), then `launch_fix` records **both** ledger `#try` keys and
-fires `ci-fixer-run.sh` (`:139-150`). Caps exhausted → `give_up` posts a needs-human comment +
-a loud `ci-fix.escalation` embed to `#gjc-approvals`, **once**, dedup on `#gaveup` (`:112-134`).
+The **fix-until-green poller** — bounded and guard-railed, **DEFAULT OFF** (`review/ci-fixer.sh:1-269`).
+Timer every 10 min; K5 self single-flight on `ci-fixer-poll.lock` (`:252`). Three kill switches gate
+every run (`gate_open`, `:117-121`; see [Fix-until-green](#fix-until-green-ci-fixer)). **Author scope
+is `CI_FIXER_AUTHORS`** (`is_ci_fixer_author`, `:103-113`, applied at `:259`): the poller lists ALL open
+PRs and gates on membership in that list — default `engels74-bot renovate[bot] dependabot[bot]`
+(rendered from `[ci_fixer].authors`) — replacing the old hard "bot-authored only" `--author "$BOT"`
+filter. The old restriction existed because upstream bots force-push over fleet commits; Workstream C
+(`rebaseWhen:conflicted`) + D (containment re-arm) now make automated-author PRs safe, so they are back
+in scope by default (a lone `-` sentinel = empty set = touches no one). Per PR on its HEAD sha,
+`consider_pr` (`:199-245`) classifies via the shared `ci_state`: GREEN/PENDING/NONE → skip;
+**UNKNOWN → defer** (gh API failure, never a fix attempt); RED → check caps (`max_per_sha=2`,
+`max_per_pr=5`, `:220`), exponential backoff (`backoff_base_mins * 2^attempts`, `:182-194,226`), a
+non-blocking `review-<repo>.lock` pre-check that ALSO count-then-marks both `#try` keys atomically
+IN-lock (K4, `:214-238`), then `launch_fix` fires `ci-fixer-run.sh` (`:162-178`). Caps exhausted →
+`give_up` posts a needs-human comment + a loud `ci-fix.escalation` embed to `#gjc-approvals`, **once**,
+dedup on `#gaveup` (`:133-155`).
 
 ### review/ci-fixer-run.sh
 
@@ -308,9 +351,105 @@ Shared isolated-checkout helper (`review/review-checkout.sh:1-49`). Its `ensure_
 the **canonical copy** of the per-repo review-clone logic (extracted verbatim from `review-run.sh`):
 guarantees an isolated clone under `$REVIEW_ROOT/<repo>` with its own `.git`, reset to the default
 branch, and prints its path. Sourceable with no side effects (double-source guard `:15-16`; provides a
-`log()` only if the caller has not, `:32-34`). Sourced today by `ci-fixer-run.sh`; `review-run.sh`
-keeps its own inline copy for now and will migrate later (kept untouched this phase to avoid conflict
-with the engine lane, `:8-10`).
+`log()` only if the caller has not, `:32-34`). Now sourced by **both** `ci-fixer-run.sh` and
+`review-run.sh` (the latter dropped its inline copy — `review-run.sh:57`), so the two engine lanes
+share one `ensure_checkout`. Both callers run it **under the per-repo `review-<repo>.lock`** (K1), never
+at launch time, because it mutates the shared `fleet/review/<repo>` tree.
+
+### review/review-shared.sh
+
+Helpers shared by the review policy lane and the Workstream-D force-push re-arm path
+(`review/review-shared.sh:1-72`; sourced, never executed). Single source of truth for three
+GitHub-derived facts (emits no tokens/IDs/paths): `latest_suggestion_review` (`:31-39`, moved here
+verbatim from `review-detector.sh` so the detector and the re-arm path classify "newest augmentcode[bot]
+review carries suggestions" identically); `pr_head_sha` (`:44-47`, engine-neutral head via
+`git ls-remote refs/pull/<pr>/head`); and `head_contains <full> <psha> <headsha>` (`:64-72`), the
+force-push containment check via the GitHub compare API — `identical|ahead ⇒ 0` (contained, no re-arm),
+`behind|diverged ⇒ 1` (force-pushed away, re-arm), empty/other `⇒ 2` (API failure, DEFER). Reused by
+`review-detector.sh` (D re-arm) and `automerge.sh` (policy-settlement defer).
+
+### review/automerge.sh
+
+The **AUTOMERGE lane's poller** — timer-driven, guard-railed, **SYNCHRONOUS** and **DEFAULT OFF**
+(`review/automerge.sh:1-406`). Unlike review/ci-fix, there is **no detached handler**: a merge happens
+inline, inside the per-repo lock; the systemd timer + this poller are the loop, GitHub + the ledger are
+the counters. K5 self single-flight on `automerge-poll.lock` (`main`, `:392`).
+
+**Kill switches (ALL must allow, else exit 0 quietly):** `AUTOMERGE_ENABLED=1` (from
+`[merge].automerge_enabled`, default 0/OFF) **AND** no `~/.gjc-bot/automerge.disable` marker **AND**
+`DRY_RUN` unset **AND** repo not in `AUTOMERGE_EXCLUDE_REPOS` **AND** the PR has no `automerge-hold`
+label (`gate_open` `:166-171`, per-repo/per-PR checks in the loop). Author scope is `AUTOMERGE_AUTHORS`
+(default `renovate[bot] dependabot[bot]`; `-` sentinel = empty set).
+
+**G-F1 capability guard (fail-closed).** Before ANY merge this pass, `capability_ok_or_escalate`
+(`:176-186`) **feature-probes `gh pr merge --help`** for the literal `--match-head-commit` (a behaviour
+probe, not a version-string compare). If absent → fail-closed: emit exactly ONE `automerge.escalation`
+embed (deduped per host-hour), refuse ALL merges this pass, NEVER call `gh pr merge`, record no `#try`.
+
+**Eligibility (per open automated-author PR, OLDEST-FIRST, ≤`AUTOMERGE_MAX_PER_POLL` merges/repo/poll —
+default 1, `:78,377-382`).** `consider_pr` (`:309-361`) gates on: terminal ledger short-circuits
+(`#merged:<sha>`, `#blocked`); attempt cap `#try` < `AUTOMERGE_MAX_ATTEMPTS` (default 3) else loud
+`give_up` once; no `automerge-hold`; not draft; `mergeable==MERGEABLE`; `reviewDecision !=
+CHANGES_REQUESTED`; `ci_state(HEAD)==GREEN` (NONE/RED never merge, **UNKNOWN/PENDING defer** — no `#try`);
+HEAD-commit quiet period ≥ `AUTOMERGE_MIN_HEAD_AGE_MINS` (default 10); and **review policy SETTLED**
+(`policy_settled` `:243-263`, automated authors only) — reads the review-policy ledger: `#escalated` ⇒
+terminal block; a `#policy-pushed:<sha>` not contained by the current head ⇒ defer (D re-arm owns the
+fix); a suggestion review not yet `#consumed` ⇒ defer; no suggestion review yet ⇒ settle only after
+`AUTOMERGE_REVIEW_WAIT_MINS` (default 30) from head age.
+
+**Merge critical section** (`attempt_merge` `:271-304`, entirely inside the locks): take
+`review-<repo>.lock` **non-blocking** + a non-blocking PROBE of the global `review.lock` (either busy ⇒
+defer 75). IN-lock, in order: idempotent `state==MERGED` check (record `#merged`, no attempt);
+**re-fetch HEAD sha** (moved ⇒ stale, defer, no real attempt); **re-check `ci_state`** (must still be
+GREEN); then a **gated self-approval** (`ensure_approved`): when `AUTOMERGE_APPROVE=1` the bot submits a
+formal APPROVE review on the exact head sha (satisfying a required-review rule since the bot is not the PR
+author), ledger-deduped per sha, and a transient approve failure DEFERs (exit 77, no `#try`); it is a pure
+no-op when `AUTOMERGE_APPROVE=0`. Then `ledger_mark #try` **before** the merge (so a head-mismatch reject still burns the attempt); then
+`gh pr merge <pr> --squash --match-head-commit <sha> --delete-branch=false`. Success ⇒ `#merged:<sha>` +
+an `automerge` embed to `#gjc-approvals`. Server-side `--match-head-commit` is the race guard: a
+force-push between the CI check and the merge is REJECTED by GitHub. `AUTOMERGE_METHOD` is validated to
+`squash|merge|rebase` (never an injected flag). **`automerge_enabled` is still `false`** on the live host
+— committed and wired, but canary-pending.
+
+### maintenance/fleet-update.sh
+
+The **nightly fleet-update orchestrator** (`maintenance/fleet-update.sh:1-182`; `systemd/fleet-update.
+{service,timer}`, ~03:30, **DEFAULT OFF**). Kill switches: `TOOL_UPDATE_ENABLED=1` (from
+`[updates].tool_update_enabled`, default 0/OFF) **AND** no `~/.gjc-bot/fleet-update.disable` marker
+**AND** `DRY_RUN` unset (`gate` `:63-71`; `DRY_RUN=1` ⇒ `plan_only`, log intents, mutate nothing).
+
+**Quiesce → update → verify** (`main` `:148-178`). `quiesce` (`:100-118`) takes the global `gjc.lock`
+AND `review.lock` **blocking-with-timeout** (`flock -w`, held via exec'd fds) then waits for zero live
+coordinator-mcp sessions (`count_live_coord` `:76-84`, **fail-safe:** a missing/unparseable `live`
+field counts as LIVE so it defers rather than proceeds over an active run); any timeout ⇒ `defer`
+(notice embed, exit 0 — never force) within `QUIESCE_TIMEOUT_MINS` (default 45). With both locks held:
+run `tool-update.sh`, then `hermes-update.sh --apply` (gateway restarted LAST), release the locks, run
+`bootstrap/verify.sh`, and emit ONE `fleet-update` summary embed with a per-job ok/fail table.
+
+### maintenance/tool-update.sh
+
+Headless port of the interactive `update-ai` manifest (`maintenance/tool-update.sh:1-123`; the
+non-interactive twin of the `~/.zshrc` `update-ai` function). Enumerates the full manifest — `uv`,
+`prek`, `bun upgrade`, bun globals, `bun update -g --latest`, skills, `ruff`; `brew_update`/
+`brew_upgrade` guarded on `command -v brew`; the macOS `agy` job guard-skipped on Linux (`:102-120`).
+Each `job` (`:65-79`) guards on tool existence, logs to a per-run log under `~/.gjc-bot/logs/`, records
+`name<TAB>status` to a TSV for fleet-update's summary, and retries ~3× with exponential backoff on
+rate-limit/network patterns (`_ua_exec` `:49-62`). **PIN RE-ASSERTION (critical):** because
+`bun update -g --latest` bumps gajae-code/clawhip PAST the fleet pins, `reassert_pins` re-runs
+`bootstrap/10-engines.sh` in a `trap ... EXIT INT TERM HUP` (`:84-98`) — so ANY exit path (success,
+mid-manifest failure, signalled abort) restores the pins and can never strand gajae unpinned.
+
+### maintenance/hermes-update.sh
+
+Track-latest hermes-agent updater (`maintenance/hermes-update.sh:1-167`; `--check` report-only /
+`--apply`). Hermes is not ref-pinned (bootstrap only reports drift) — this wrapper owns rollback.
+`run_apply` (`:92-153`): `hermes update --check` gate (exit 0 if already current); abort if the
+checkout tree is dirty (escalation embed); record prev-ref (`git rev-parse HEAD`) to
+`~/.gjc-bot/state/hermes-prev-ref`; `hermes update --yes`; restart `hermes-gateway.service`; health-gate
+(`is-active` AND `hermes_cli.main gateway status`, `health_ok` `:58-61`). On any failure → `rollback`
+(`:65-80`): checkout prev-ref + `pip install -e` + restart + re-health-check + a `hermes-update`
+escalation embed; on success → record deployed-ref + a `hermes-update` info embed. `bootstrap/10-engines.sh`'s
+stub delegates here.
 
 ## LLM-invocation lanes: engine vs brain
 
@@ -329,17 +468,26 @@ The pipeline runs LLMs on **two distinct lanes**, and the split is a safety boun
 | Issue triage (ACTIONABLE/SKIP) | `intake/issue-spool-adapter.sh` | **BRAIN** | NanoGPT no-tools |
 | Merge-gate verdict (MERGE_READY/REQUEST_CHANGES) | `review/merge-gate.sh` | **BRAIN** | NanoGPT no-tools |
 | Review-policy decision (APPLY/DISMISS/ESCALATE) | `review/review-policy-decide.sh` | **BRAIN** | NanoGPT no-tools |
-| AI Code Review Handler (applies suggestions) | `review/review-run.sh` → `ci-fix-handler`'s sibling | **ENGINE** | `[review].engine` (gjc default) |
+| AI Code Review Handler (applies suggestions) | `review/review-run.sh` → `ai-code-review-handler-original.md` | **ENGINE** | `[review].engine` (gjc default) |
 | CI-Fix Handler (fixes RED CI) | `review/ci-fixer-run.sh` | **ENGINE** | `[review].engine` (gjc default) |
 
 **The CI-fix lane SHARES `REVIEW_ENGINE`** — it deliberately reads the *same* `[review].engine` knob,
 so the fleet makes **one** engine cutover decision for both coding lanes rather than two.
 
-**Cutover gate (deploy-time, not code).** The shipped default is already `engine = "gjc"`, but the
-default flip is gated operationally: it requires **≥3 handler runs across ≥2 repos, including ≥1
-failing-CI case**, with **auto-rollback armed**, before gjc is trusted as the fleet default. Until a
-host has walked that gate it MAY pin `engine = "claude"` in `fleet.toml`; the pin is a deploy
-decision, never a code change.
+**Cutover complete (live).** `REVIEW_ENGINE=gjc` is live and active on the review lane, validated via
+the live review workflow. Recorded evidence: **mover-status#26** — gjc opened the PR, augmentcode posted
+1 suggestion, the handler addressed it with a fix commit (`fix: address code review comments (PR #26,
+iteration 1)`), and the re-review converged clean (2 handler runs, both `engine=gjc … _handler OK`); gjc
+also produced augmentcode-approved (no-suggestion) PRs on **easyhdr#118** + **zondarr#189** that the
+detector correctly no-op'd. Verified live alongside: **K1** (both the per-repo `review-<repo>.lock` and
+the global `review.lock` held across the run), **K5** single-flight, a `gjc -p --no-pty` de-risk probe,
+and `gjc-reap.sh` reaping 3 stale coordinator orphans. The strict pre-cutover rubric (≥3 handler runs
+across ≥2 repos incl a failing-CI case) is superseded: gjc's clean easyhdr/zondarr PRs ran no handler
+(a positive signal), and the engine is validated on the harder address-suggestions→fix→converge path.
+The legacy `claude` engine stays selectable per host (`engine = "claude"` in `fleet.toml`)
+as a deploy decision, never a code change. Nuance: `[review].model_primary`/`model_fast` (rendered
+`MODEL_PRIMARY`/`MODEL_FAST`) apply ONLY to the `claude` engine path — under `engine=gjc` they are inert
+because gjc inherits its own Codex backend (the live host keeps `opus`/`sonnet`, harmless under gjc).
 
 ## One-review policy (automated-author PRs)
 
@@ -372,6 +520,28 @@ serialising poller ever blocking a running handler (they take different locks). 
 launcher sets `SUPPRESS_TRIGGER=1`; the handler's Phase 7 then withholds the `augment review`
 re-trigger and records `Trigger: withheld (policy)`.
 
+## Force-push resilience — policy re-arm (Workstream D)
+
+Renovate/dependabot force-push their PR branches, so a policy-lane review (or ci-fix commit) the fleet
+already acted on can be rebased away — the handler's fix would silently vanish while the policy lane, seeing
+no new review, would never re-run. Workstream D closes that with a **containment-based re-arm**, all in
+`review-detector.sh` (`policy_rearm_check`/`policy_rearm_launch`, `:229-282`) + the review handler.
+
+**Snapshot + arm.** `review-run.sh`'s `_handler` (policy-lane runs, `suppress=1` only) snapshots the PR
+head via `pr_head_sha` before/after `engine_run`; if the run advanced the head it records
+`#policy-pushed:<after-sha>` in the review-policy ledger (`review-run.sh:138-151`).
+
+**Detect + re-arm.** Each poll, `policy_rearm_check` reads the newest `#policy-pushed:<sha>` for the PR
+and compares it to the current head via `review-shared.sh` `head_contains()` (GitHub compare API):
+`identical`/`ahead` ⇒ contained ⇒ **no re-arm** (a normal CI/renovate commit ON TOP keeps the sha an
+ancestor); `behind`/`diverged` ⇒ the sha was force-push-rebased away ⇒ **re-arm** (relaunch the handler
+for the SAME review-id against the new head, `--suppress-trigger`); empty/API-failure ⇒ **DEFER** (never
+guess). Re-arms are deduped per head lineage on a `#rearm:<head>` ledger key, capped by
+`REVIEW_POLICY_MAX_REARMS` (default 2), and on the cap it **escalates once** (a `#rearm-exhausted` dedup
+marker + a loud log line, `:273-278`). The re-arm launch obeys the same deferred-mark discipline under
+`review-<repo>.lock` (in-lock dedup + cap re-check before release). `head_contains` is reused by
+`automerge.sh` as its policy-settlement defer condition, so both lanes agree on containment.
+
 ## Fix-until-green (ci-fixer)
 
 The B-3 lane makes a bounded, guard-railed attempt to turn a bot PR's RED CI green — **default OFF**,
@@ -382,11 +552,17 @@ default 0/OFF) **AND** no `~/.gjc-bot/ci-fixer.disable` marker file on the host 
 (`DRY_RUN=1` logs intended actions, takes none). Disabled or marker present → exit 0 quietly, zero
 records.
 
-**Scope: bot-authored PRs ONLY.** Automated-author (renovate/dependabot) and human PRs are never
-touched — upstream bots force-push over fleet commits, so a fix there would be clobbered and churn.
+**Scope: membership in `CI_FIXER_AUTHORS`** (rendered from `[ci_fixer].authors`; default
+`engels74-bot renovate[bot] dependabot[bot]`, a lone `-` = empty set). The poller lists ALL open PRs and
+gates on author membership — replacing the old hard "bot-authored only" filter. Automated-author
+(renovate/dependabot) PRs used to be excluded because upstream bots force-push over fleet commits and
+would clobber a fix; that risk is now mitigated by Workstream C (`rebaseWhen:conflicted`) + D
+(containment/re-arm), so they are back in scope by default. Human PRs outside the list are still never
+touched. **CI-fixer stays default-OFF regardless** (the `CI_FIXER_ENABLED` kill switch).
 
-**Per bot PR, on its HEAD sha:** `ci_state` GREEN/PENDING/NONE → skip; RED → if the PR already gave up
-→ skip; else evaluate **caps** (`max_per_sha=2`, `max_per_pr=5`) and **exponential backoff**
+**Per in-scope PR, on its HEAD sha:** `ci_state` GREEN/PENDING/NONE → skip; **UNKNOWN → defer** (gh API
+failure, never a fix attempt); RED → if the PR already gave up → skip; else evaluate **caps**
+(`max_per_sha=2`, `max_per_pr=5`) and **exponential backoff**
 (`backoff_base_mins * 2^attempts_this_pr` minutes = 10/20/40/80…). Caps hit → **terminal give-up
 ONCE** (needs-human comment + `ci-fix.escalation` embed, dedup `#gaveup`). Otherwise a non-blocking
 `review-<repo>.lock` pre-check → record the attempt (both `#try` ledger keys) + launch one bounded run.
@@ -415,12 +591,52 @@ re-trigger `augment review` (the CI-fix handler never posts `augment review`), s
 spawn a fresh review round; and every per-PR attempt counter is monotone, so cumulative spend per PR
 is bounded ⇒ the whole interleaving terminates.
 
+## Lock topology (Workstream K)
+
+The concurrency model across the mutating + polling lanes, hardened by Workstream K:
+
+- **Global `review.lock` — single-flight for the review handler.** `review-run.sh`'s `_handler` holds it
+  **non-blocking** (`flock -n 9`) for the whole run and aborts if busy; `review-detector.sh` and
+  `merge-gate.sh` take it non-blocking as a courtesy probe (defer while a handler is mutating a PR).
+  `automerge.sh` also takes it non-blocking; `fleet-update.sh`'s quiesce, by contrast, acquires it
+  **blocking-with-timeout** and *holds* it for the whole nightly update (deferring to the next night
+  if the timeout elapses) — see [`maintenance/fleet-update.sh`](#maintenancefleet-updatesh).
+- **Shared per-repo `review-<repo>.lock` (K1).** Serialises the shared `fleet/review/<repo>` checkout
+  (the `git fetch` + `checkout -f` that `ensure_checkout` performs). `review-run.sh`'s `_handler` takes it
+  **INSIDE** the global lock (order: global fd 9 → per-repo fd 8, `review-run.sh:130-132`); `ci-fixer-run.sh`
+  takes **ONLY** the per-repo lock, **BLOCKING** (`ci-fixer-run.sh:110-111`). **Deadlock-free by
+  construction:** ci-fixer never blocking-acquires the global while holding the per-repo lock, so the two
+  lanes can never form a wait cycle. Different repos run fully in parallel. `automerge.sh`'s merge critical
+  section and the policy/ci-fixer pollers take this same per-repo lock non-blocking.
+- **K2 UNKNOWN-defer.** `lib/gh-ci.sh` `ci_state` returns a distinct **UNKNOWN** on gh API failure (after
+  one retry); every caller (merge-gate, ci-fixer, automerge) treats UNKNOWN as **defer**, never as
+  NONE/green — a transient 5xx can never be mistaken for "no CI".
+- **K4 exact-ledger + atomic count-then-mark.** `lib/ledger.sh` `ledger_seen` uses an exact
+  `jq select(.key==$k)` match (a substring can't spuriously hit), and the ci-fixer counts caps **and**
+  marks both `#try` keys inside one hold of `review-<repo>.lock` so two overlapping polls can't both read
+  "under cap" and double-launch. The policy lane's deferred-mark (`#consumed`/`#rearm:<sha>` written
+  in-lock before release) is the same discipline.
+- **K5 per-poller single-flight.** Every poll loop (`review-detector`, `ci-fixer`, `merge-gate`,
+  `automerge`) opens a script-level `flock -n <name>-poll.lock` at entry and exits 0 on contention, so a
+  timer firing mid-pass never runs two overlapping pollers.
+
+**K7 — `review.backlog` signal.** After routing a repo's reviews, `review-detector.sh`'s
+`review_backlog_check` (`:319-350`) computes the OLDEST UNHANDLED review age — a suggestion-carrying
+augmentcode[bot] review that the fleet has recorded neither a SEEN marker (existing lane) nor a
+`#consumed` marker (policy lane) for, aged from its `submitted_at`. Above `REVIEW_BACKLOG_ALERT_MINS`
+(default 120) it emits ONE `review.backlog` design-system embed to `#gjc-approvals`, deduped to one alert
+per repo per host-hour; silent under threshold. It mitigates the fleet-wide serial review single-flight
+(per-repo review concurrency remains a documented follow-up, made safe by K1).
+
 ## Shared lib
 
 `lib/discord-embed.sh` (`:1-62`) — the single Discord-embed emitter, sourced by
-`intake/issue-spool-adapter.sh`, `review/merge-gate.sh`, `review/review-policy-decide.sh`,
-`review/ci-fixer.sh`, and `review/ci-fixer-run.sh`. The design-system kinds it now carries include
-`review-policy`, `ci-fix`, and `ci-fix.escalation`.
+`intake/issue-spool-adapter.sh`, `review/review-detector.sh`, `review/merge-gate.sh`,
+`review/review-policy-decide.sh`, `review/ci-fixer.sh`, `review/ci-fixer-run.sh`,
+`review/automerge.sh`, `maintenance/fleet-update.sh`, and `maintenance/hermes-update.sh`. The
+design-system kinds it now carries include `review-policy`, `ci-fix`, `ci-fix.escalation`, plus the
+five kinds added this rebaseline (rendered in `relay/runtime/design-system.json`): `automerge`,
+`automerge.escalation`, `hermes-update`, `fleet-update`, and `review.backlog`.
 
 `lib/engine.sh` (`:1-63`) — the coding-engine dispatch. One entrypoint
 `engine_run <gjc|claude> <filled_prompt_path> <timeout_secs>`: runs one coding-work invocation under a
@@ -428,16 +644,20 @@ hard `timeout` (124 on timeout, 64 for a bad arg/unknown engine), dispatching gj
 "@prompt"`) vs the legacy claude path (MODEL_PRIMARY read only there). Sourceable with no side effects;
 shared by `review-run.sh` and `ci-fixer-run.sh` so neither hardcodes a CLI.
 
-`lib/gh-ci.sh` (`:1-60`) — the shared CI-state classifier. `ci_state <repo> <sha>` →
-GREEN/RED/PENDING/NONE from check-runs + commit statuses (the body is extracted **verbatim** from
-merge-gate so the advisory gate and the ci-fixer classify identically); `ci_red_summary` is a
-human-readable failing-check list for `<details>` blocks. Emits no tokens/IDs/paths.
+`lib/gh-ci.sh` (`:1-79`) — the shared CI-state classifier. `ci_state <repo> <sha>` →
+GREEN/RED/PENDING/NONE/**UNKNOWN** from check-runs + commit statuses (single source of truth: sourced by
+merge-gate, ci-fixer, and automerge so all three classify identically). **UNKNOWN (K2)** is returned on a
+gh API failure after one retry — distinct from NONE (genuine no-CI) — and every caller treats it as
+**defer**, never green. `ci_red_summary` is a human-readable failing-check list for `<details>` blocks.
+Emits no tokens/IDs/paths.
 
-`lib/ledger.sh` (`:1-61`) — the shared append-only JSONL ledger helpers (`ledger_seen`, `ledger_mark`,
-`ledger_count`, `ledger_last_ts`) backing the policy/ci-fixer dedup, caps, and backoff bookkeeping.
-**Per-file** locking (each ledger `<f>` serialises on its own `<f>.lock`) so unrelated ledgers never
-contend. `#try`/`#gaveup`/`#consumed`/`#outcome:*` keys carry a fixed trailing segment so a
-startswith-count can't bleed across ids (pr 1 vs pr 12).
+`lib/ledger.sh` (`:1-62`) — the shared append-only JSONL ledger helpers (`ledger_seen` with **exact
+`.key==$k` match, K4**, `ledger_mark`, `ledger_count`, `ledger_last_ts`) backing the policy/ci-fixer/
+automerge dedup, caps, and backoff bookkeeping. **Per-file** locking (each ledger `<f>` serialises on its
+own `<f>.lock`) so unrelated ledgers never contend. Keys carry a fixed trailing segment so a
+startswith-count can't bleed across ids (pr 1 vs pr 12): `#try`/`#gaveup`/`#consumed`/`#outcome:*`
+(ci-fix/policy), `#policy-pushed:<sha>`/`#rearm:<sha>`/`#rearm-exhausted`/`#decision:*` (D re-arm),
+`#merged:<sha>`/`#blocked` (automerge).
 
 `lib/github-md.sh` (`:1-72`) — GitHub-Flavored-Markdown composition helpers (`gmd_h3`, `gmd_fence`,
 `gmd_details`, `gmd_footer`) for house-style PR comments/`<details>` blocks (see
@@ -491,22 +711,27 @@ the new stage-dirs (verified 2026-07-07).
 | `review-detector.timer` | systemd timer | boot+5 min, every 5 min | review/review-detector.sh |
 | `merge-gate.timer` | systemd timer | boot+10 min, every 10 min | review/merge-gate.sh |
 | `ci-fixer.timer` | systemd timer | boot+10 min, every 10 min | review/ci-fixer.sh (**inert while `CI_FIXER_ENABLED=0`**, the default) |
-| `gjc-worktree-janitor.timer` | systemd timer | boot+2 min, every 2 min | maintenance/gjc-worktree-janitor.sh |
+| `automerge.timer` | systemd timer | `*:0/10` (every 10 min) | review/automerge.sh (**inert while `AUTOMERGE_ENABLED=0`**, the default; canary pending) |
+| `fleet-update.timer` | systemd timer | `*-*-* 03:30` (nightly) | maintenance/fleet-update.sh (**inert while `TOOL_UPDATE_ENABLED=0`**, the default) |
+| `gjc-worktree-janitor.timer` | systemd timer | boot+2 min, every 2 min | maintenance/gjc-worktree-janitor.sh (+ tmux-reaper & log-prune) |
 | `stale-branches-report` | hermes cron | `0 3 * * *` (no_agent) | `~/.hermes/scripts/stale-branches.sh` wrapper → maintenance/stale-branches.sh → `#gjc-approvals` |
 | `mover-status-issue-triage` | hermes cron | `0 9 * * 1` (agent+prerun) | `~/.hermes/scripts/issue-triage-fetch.sh` wrapper → intake/issue-triage-fetch.sh → `#gjc-events` |
-| `gjc-reap.sh` | none | manual | run/gjc-reap.sh |
+| `gjc-reap.sh` | janitor-wired | invoked by the janitor's tmux sweep (I; default OFF) + manual | run/gjc-reap.sh |
 
 The gjc-bot `.service` units are **user-scope** (`~/.config/systemd/user/`, no `sudo`) and set
 `ExecStart=` to the absolute stage-dir path under
-`/home/cvps/github/engels74-bot/gjc-fleet/pipeline/<stage>/<script>.sh` (verified against the
-installed copies 2026-07-07, same day as the gjc-fleet monorepo migration; `ci-fixer.service` was
-added later in the B-3 wave, `Nice=15`, shipped inert). Each also carries
-`EnvironmentFile=-%h/.gjc-bot/gjc-bot.env` — the rendered, 0600 env file that supplies the
-per-lane Discord channel IDs (see [Env & config surface](#env--config-surface)). Unit subtlety:
-`issue-spool-adapter.service`, `review-detector.service`, and `ci-fixer.service` set
-**`KillMode=process`** — without it, systemd's default control-group kill would reap the
-`setsid`-detached gjc/handler/fixer run when the oneshot parent exits. The janitor unit deliberately has no `PrivateTmp` (needs the user tmux socket
-in `/tmp`). All units are rendered from `gjc-fleet/systemd/*` by `render/render.sh apply --units`.
+`/home/cvps/github/engels74-bot/gjc-fleet/pipeline/<stage>/<script>.sh` (`ci-fixer.service` was added in
+the B-3 wave, and `automerge.service` + `fleet-update.service` in this rebaseline — all `Nice=15`, all
+shipped **inert** behind their default-OFF kill switches; the two new units are wired into
+`bootstrap/50-units.sh` + `verify.sh`). Each also carries `EnvironmentFile=-%h/.gjc-bot/gjc-bot.env` —
+the rendered, 0600 env file that supplies the per-lane Discord channel IDs (see
+[Env & config surface](#env--config-surface)). Unit subtlety: `issue-spool-adapter.service`,
+`review-detector.service`, and `ci-fixer.service` set **`KillMode=process`** — without it, systemd's
+default control-group kill would reap the `setsid`-detached gjc/handler/fixer run when the oneshot parent
+exits. **`automerge.service` deliberately does NOT** — the automerge poller merges **synchronously
+inline** (no detached `_handler` to keep alive), so the default control-group kill is correct. The
+janitor unit deliberately has no `PrivateTmp` (needs the user tmux socket in `/tmp`). All units are
+rendered from `gjc-fleet/systemd/*` by `render/render.sh apply --units`.
 
 > [inferred] The hermes cron also carries a third, self-scheduled agent job
 > (`monitor-easyhdr-pr115-rustsec`, `every 60m`) that does **not** touch gjc-bot — it is a transient
@@ -535,11 +760,19 @@ Everything is overridable by env; defaults in the scripts. Key names: `GJC_BOT_S
 overrides, `GJC_RUN_TIMEOUT`, `REVIEW_RUN_TIMEOUT`, `JANITOR_GRACE_SECONDS`, `STALE_BRANCH_DAYS`,
 `BRAIN_MODEL`, `NANOGPT_URL`, `REVIEW_MODEL_PRIMARY/FAST`, `HANDLER_TEMPLATE`, repo filters
 (`MERGE_GATE_REPOS`/`REVIEW_REPOS`/`TRIAGE_REPOS`/`CI_FIXER_REPOS`), `*_CHANNEL` overrides, `DRY_RUN`.
-The B-2/B-3 waves add (all rendered from `fleet.toml` into `gjc-bot.env` — see
-[45-fleet-config.md](45-fleet-config.md)): `REVIEW_ENGINE` (the ENGINE-lane engine, default gjc);
-`REVIEW_AUTOMATED_AUTHORS`, `REVIEW_POLICY_MAX_HANDLER_RUNS`, `REVIEW_POLICY_DECISION_MODE` (one-review
-policy); and `CI_FIXER_ENABLED` (default 0/OFF), `CI_FIXER_MAX_PER_SHA`, `CI_FIXER_MAX_PER_PR`,
-`CI_FIXER_BACKOFF_BASE_MINS`, `CI_FIX_RUN_TIMEOUT` (fix-until-green).
+The engine/policy/ci-fix/automerge/update waves add (all rendered from `fleet.toml` into `gjc-bot.env`
+— see [45-fleet-config.md](45-fleet-config.md)): `REVIEW_ENGINE` (the ENGINE-lane engine, default gjc);
+`REVIEW_AUTOMATED_AUTHORS`, `REVIEW_POLICY_MAX_HANDLER_RUNS`, `REVIEW_POLICY_DECISION_MODE`,
+`REVIEW_POLICY_MAX_REARMS` (default 2 — the D re-arm cap) (one-review policy + re-arm);
+`CI_FIXER_ENABLED` (default 0/OFF), `CI_FIXER_AUTHORS` (the E author-scope list), `CI_FIXER_MAX_PER_SHA`,
+`CI_FIXER_MAX_PER_PR`, `CI_FIXER_BACKOFF_BASE_MINS`, `CI_FIX_RUN_TIMEOUT` (fix-until-green);
+`REVIEW_BACKLOG_ALERT_MINS` (default 120 — the K7 signal); the automerge set `AUTOMERGE_ENABLED`
+(default 0/OFF), `AUTOMERGE_AUTHORS`, `AUTOMERGE_METHOD`, `AUTOMERGE_MIN_HEAD_AGE_MINS`,
+`AUTOMERGE_REVIEW_WAIT_MINS`, `AUTOMERGE_MAX_ATTEMPTS`, `AUTOMERGE_MAX_PER_POLL` (default 1),
+`AUTOMERGE_EXCLUDE_REPOS`; the janitor set `JANITOR_TMUX_REAP_ENABLED` (default 0/OFF),
+`JANITOR_TMUX_GRACE_SECONDS`, `JANITOR_LOG_RETENTION_DAYS`, `JANITOR_LANE_LOG_MAX_BYTES`; and the nightly
+update set `TOOL_UPDATE_ENABLED` (default 0/OFF), `QUIESCE_TIMEOUT_MINS`. **Every new lane ships
+default-OFF** — the committed code is live-from-repo but gated behind these switches.
 
 Secrets (names only): `GITHUB_TOKEN` (exported as `GH_TOKEN`) and `NANOGPT_API_KEY`, both grepped
 at runtime from `~/.hermes/.env`. **Discord channel IDs are no longer hard-coded in the scripts**
@@ -556,15 +789,20 @@ numeric Discord IDs out of the `gjc-fleet` git history entirely; the channels ar
 [45-fleet-config.md](45-fleet-config.md).
 
 State in `~/.gjc-bot/`: locks (`gjc.lock`, `review.lock`, `issues.lock`, `merge-gate.lock`,
-`reviews.lock`, the per-repo `review-<repo>.lock` shared by the policy lane + ci-fixer, and a
-per-ledger `<ledger>.lock` from `lib/ledger.sh`'s per-file locking), ledgers (`issues.jsonl`,
-`reviews.jsonl`, `merge-gate.jsonl`, `review-policy.jsonl`, `ci-fixer.jsonl`), the B-3 host kill
-marker (`ci-fixer.disable`, absent by default), the spool (`issue-spool.jsonl`), logs (`adapter.log`,
-`gjc-run.log`, `review.log`, `merge-gate.log`, `ci-fixer.log`, `janitor.log`).
+`reviews.lock`, the per-repo `review-<repo>.lock` shared by the review handler + policy lane + ci-fixer
++ automerge, the K5 per-poller `*-poll.lock` set — `review-detector-poll.lock`, `ci-fixer-poll.lock`,
+`merge-gate-poll.lock`, `automerge-poll.lock` — and a per-ledger `<ledger>.lock` from `lib/ledger.sh`'s
+per-file locking), ledgers (`issues.jsonl`, `reviews.jsonl`, `merge-gate.jsonl`, `review-policy.jsonl`,
+`ci-fixer.jsonl`, `automerge.jsonl`), host kill markers (`ci-fixer.disable`, `automerge.disable`,
+`fleet-update.disable` — all absent by default), the spool (`issue-spool.jsonl`), the
+`state/hermes-prev-ref`/`state/hermes-deployed-ref` records, the per-run engine log dir
+`logs/<lane>-<repo>-pr<NN>-<ts>.log`, the `.bak` archive dir `archive/`, and lane logs (`adapter.log`,
+`gjc-run.log`, `review.log`, `merge-gate.log`, `ci-fixer.log`, `automerge.log`, `fleet-update.log`,
+`janitor.log`).
 
 ## Discrepancies
 
-1. **Missing handler template — RESOLVED 2026-07-06 (later the same day).** `review/review-run.sh:20`
+1. **Missing handler template — RESOLVED 2026-07-06 (later the same day).** `review/review-run.sh:25`
    points at `$SCRIPTS_DIR/review/ai-code-review-handler-original.md` (present on disk today), which
    had gone missing
    despite a successful earlier run (`_handler OK mover-status#25`, 17:50). It was **recreated
@@ -576,9 +814,12 @@ marker (`ci-fixer.disable`, absent by default), the spool (`issue-spool.jsonl`),
    `lib/discord-embed.sh`, `RESULT:` line as the authoritative outcome since `claude -p` exit
    codes can't carry logical outcomes). sed-fill contract verified against
    `review/review-run.sh:81-87`; independently critic-reviewed (2 blocking findings fixed).
-2. **`gjc-reap.sh` is unwired.** Its header claims invocation "by a clawhip route on `tmux.stale`",
-   but no such route exists and `[monitors.tmux].sessions = []`. The live stop mechanism for a
-   hung run is `_exec`'s own `timeout 1800` plus the janitor; the reaper is a manual tool.
+2. **`gjc-reap.sh` — now wired into the janitor (was: unwired).** Its header still names a clawhip
+   `tmux.stale` route that never existed; that trigger is superseded. The reaper is now invoked by
+   `gjc-worktree-janitor.sh`'s age-based coordinator tmux sweep (Workstream I —
+   [maintenance/gjc-worktree-janitor.sh](#maintenancegjc-worktree-janitorsh)), gated on
+   `[janitor].tmux_reap_enabled` (default OFF). It remains usable manually, and the primary stop for a
+   hung run is still `_exec`'s own `timeout 1800` plus the janitor's worktree crash-net.
 3. **Stale unit description.** `issue-spool-adapter.service` says "→ Hermes issue-intake webhook",
    but the script dispatches directly to `gjc-run.sh launch`; no hermes webhook hop exists (the
    hermes webhook platform is disabled — [20-hermes-agent.md](20-hermes-agent.md#the-gateway)).
@@ -595,123 +836,24 @@ marker (`ci-fixer.disable`, absent by default), the spool (`issue-spool.jsonl`),
 
 ## Open questions
 
-- ~~Where should `ai-code-review-handler-original.md` come from?~~ Restored 2026-07-06 as an
-  architecture-native rewrite (see Discrepancies #1). ~~The new version has not yet been exercised
-  by a live review-detector launch.~~ **Exercised 2026-07-07:** two clean back-to-back handler
-  runs on `easyhdr#115` (00:21 and 00:43, both `session.finished`) — checked out the PR, fixed CI
-  ahead of review, applied augmentcode suggestions, replied, exited. Remaining sub-question: why
-  the original was removed is still unknown.
-- **Cross-lane push races on PR branches (observed 2026-07-07, easyhdr#115):** a hermes-delegated
-  gjc session and the review handler both push to the same PR branch with no shared lock (hermes
-  does not participate in the `review.lock`/`gjc.lock` protocol). Both observed collisions
-  resolved via gjc's fetch+rebase (one "already fixed upstream" detection, one non-fast-forward
-  reject+retry). Mitigated behaviorally via `~/.hermes/SOUL.md` delegation rules (rebase before
-  push, never force-push); a structural lock remains a possible future upgrade.
-- Is the interactive `wrapper` lane (and a `tmux.stale` → `gjc-reap` route) intended to be
-  re-enabled, or is `launch`/`_exec` the permanent design? (The earlier build-log noted the
-  coordinator rewire was deliberately HELD by user choice.)
-- `merge-gate.sh` and `review-run.sh` share `review.lock` — confirm this mutual exclusion
-  (merge-gate defers while a handler mutates the PR) is a deliberate contract rather than
-  incidental lock reuse.
-- ~~**Glob auto-discovery now sweeps the infra repos.**~~ **Resolved 2026-07-07 (fleet/ move):**
-  the working clones moved to `~/github/engels74-bot/fleet/` and `GH_ROOT` now defaults there, so
-  the five glob-driven lanes match exactly the 6 monitored apps; the infra repos (**`gjc-fleet`**
-  and `gjc-server-tool`, since the same-day monorepo migration folded `gjc-bot-scripts` and
-  `gjc-relay` into `gjc-fleet`) sit one level up, outside the glob.
-  Accepted side effect: the infra repos are no longer covered by
-  `stale-branches.sh`/`issue-triage-fetch.sh` either (their branches/issues are human-managed).
-- ~~**`restore.sh` still references the dead `~/scripts/repo-bot` path.**~~ **Resolved 2026-07-07
-  (gjc-fleet monorepo + user-units migration):** the stale `rm -rf ~/scripts/repo-bot` line has
-  been removed from `~/scripts/backuprestore/restore.sh`. The same pass made `restore.sh`
-  dual-scope — it tears down user-scope units first (`systemctl --user disable --now`), then any
-  leftover `/etc/systemd/system/` units (`sudo systemctl disable --now` + `rm -f`, both scopes
-  followed by their own `daemon-reload`) — reflecting the fleet's mixed transitional state during
-  the 24–48 h soak before the old system units are deleted. `backup-now.sh`'s manifest gained a
-  user-unit listing (`systemctl --user list-unit-files 'hermes*' 'clawhip*' 'gjc-*' 'issue-*'
-  'review-*' 'merge-*'`) alongside the existing system-unit listing, plus a whole-`gjc-fleet`-repo
-  manifest replacing the old separate `gjc-bot-scripts-repo.txt`/`gjc-relay-repo.txt` lines — see
-  [50-configuration-and-state.md](50-configuration-and-state.md#backups--rollback).
-- ~~Only `mover-status` has real runs so far~~ **Overtaken 2026-07-07:** `easyhdr` completed the
-  first full non-mover-status pipeline exercise (RUSTSEC triage → PR #115, review handler ×2,
-  merge-gate advisory — see Changelog). The remaining four repos are still ledgered only as
-  `pre-existing-baseline-g7` skips.
+- **Automerge canary.** `automerge.sh` is committed, wired (unit + timer + `verify.sh`), and fully
+  guard-railed, but `automerge_enabled` is still `false` on the live host — the lane has not yet been
+  canaried on a real renovate/dependabot PR. Enabling it (per-repo, watched) is the open operational step.
+- **Per-repo review concurrency.** The review handler is still fleet-wide single-flight on the global
+  `review.lock` (one handler at a time across all repos). K1's per-repo lock makes true per-repo
+  parallelism safe to build, and K7's `review.backlog` signal surfaces when the serial lane falls behind,
+  but running handlers for different repos concurrently remains a documented follow-up (not yet built).
+- Is the interactive `wrapper` lane intended to be re-enabled, or is `launch`/`_exec` the permanent
+  design? (The earlier build-log noted the coordinator rewire was deliberately HELD by user choice.) The
+  paired `tmux.stale` → `gjc-reap` question is now resolved — the reaper is wired into the janitor.
+- Residual: why the original `ai-code-review-handler-original.md` was removed on 2026-07-06 is still
+  unknown (the template itself was restored and live-verified; see Discrepancies #1).
 
 ## Changelog
 
-- 2026-07-06 — Initial draft from full script reads + installed-unit comparison.
-- 2026-07-06 (later) — Handler template restored (architecture-native one-shot rewrite);
-  discrepancy #1 and the corresponding open question updated.
-- 2026-07-07 — Handler template live-verified (2 successful runs, easyhdr#115); cross-lane
-  push-race open question added. First full non-mover-status pipeline exercise: easyhdr RUSTSEC
-  triage (8 issues → PR #115, review handler ×2, merge-gate REQUEST_CHANGES advisory).
-- 2026-07-07 (later) — Verification pass: all four main scripts, line citations, unit inventory
-  (9 units byte-identical between `~/scripts/repo-bot/systemd/` and `/etc/systemd/system/`), timer
-  schedules, and `~/.repo-bot` state inventory re-verified live. Fixed the stale "template
-  currently missing" warning (restored + live-verified); added `CODING_GUIDELINES` to the
-  review-run sed-fill list; marked the "first non-mover-status run" open question overtaken.
-- 2026-07-07 (reorg re-verify) — Repo renamed `gjc-bot` → `gjc-bot-scripts` and reorganized into
-  pipeline stage-dirs (`intake/ run/ review/ maintenance/ lib/ systemd/`); the flat
-  `~/scripts/repo-bot/` path is dead. Re-read all nine scripts + lib in the new location and
-  rewrote every `path:line` citation (the self-locating `SCRIPTS_DIR` line and sibling refs shifted
-  the near-top line numbers; deeper numbers mostly stable, all re-verified). Documented the
-  self-locating `SCRIPTS_DIR` fix and the two real-file hermes cron wrappers (`~/.hermes/scripts/*`
-  now `exec` the new stage-dir paths). Confirmed all 4 installed `.service` units' `ExecStart` point
-  at the stage-dirs and are byte-identical to `gjc-bot-scripts/systemd/`, services `Result=success`,
-  timers/path `active`. New findings: glob auto-discovery now also matches the co-located infra
-  repos; `restore.sh` still names the dead path (both raised as open questions). Status → verified.
-- 2026-07-07 (runbook-retirement pass) — Reframed the two references to the earlier hermes-stack
-  build-log/runbook (the `worktree_target_mismatch` "critical recurring bug" note and the
-  coordinator-rewire open-question aside) to past tense; that build-log has been deleted and this
-  doc set is the single source of truth.
-- 2026-07-08 (notification-overhaul: engine + B-2 + B-3 wave) — Documented the new automation stages
-  against the implemented code. Added: the **engine vs brain** LLM-invocation lane audit (table +
-  the ENGINE lane's shared `[review].engine`/`REVIEW_ENGINE` cutover gate, deploy-time not code); the
-  **one-review policy** for automated-author PRs (author routing, FIRST-CONSUME → DECIDE
-  APPLY/DISMISS/ESCALATE state machine, the HARD deferred-mark invariant under the per-repo
-  `review-<repo>.lock` distinct from the global `review.lock`, and `--suppress-trigger`); the
-  **fix-until-green** ci-fixer (three kill switches, bot-authored-only scope, caps + exponential
-  backoff, the DISCLOSED per-repo BLOCKING-lock change vs review-run's non-blocking global lock, and
-  outcome-truth-in-shell via `git ls-remote`); and the **combined review ⊗ ci-fix** state machine +
-  livelock bounds. New script-by-script entries: `review-policy-decide.sh`, `ci-fixer.sh`,
-  `ci-fixer-run.sh`, `ci-fix-handler.md`, `review-checkout.sh`. Rewrote the `review-run.sh` entry
-  (now `engine_run`, not `claude -p`) and the `review-detector.sh` entry (two author-routed lanes);
-  updated `merge-gate.sh` for the shared `lib/gh-ci.sh` + `lib/github-md.sh`. Expanded the Shared lib
-  section (`engine.sh`/`gh-ci.sh`/`ledger.sh`/`github-md.sh`), the Pipeline-at-a-glance diagram, the
-  Scheduling map (`ci-fixer.timer`, inert by default; `KillMode=process`), and the Env & config +
-  state inventories (new `REVIEW_ENGINE`/`REVIEW_POLICY_*`/`CI_FIXER_*` keys; `review-policy.jsonl`/
-  `ci-fixer.jsonl` ledgers; `ci-fixer.disable` marker; per-repo/per-ledger locks). Offline guardrail
-  proofs live in `pipeline/review/tests/`; live termination proofs are a deploy-phase gate.
-- 2026-07-07 (fleet/ move + component rename) — Page renamed `40-repo-bot-automation.md` →
-  `40-gjc-bot-automation.md`; the component is now consistently called **gjc-bot** throughout the
-  doc set (the on-disk `~/.repo-bot` state dir and `REPO_BOT_*` env prefix keep the historical
-  name). The six working clones, their `*.gajae-code-worktrees/` buckets, and `review/` moved into
-  `~/github/engels74-bot/fleet/`; all eight scripts' `GH_ROOT` default now points there
-  (gjc-bot-scripts commit `59142f9`), clawhip's six `[[monitors.git.repos]] path` entries and
-  hermes' `GJC_COORDINATOR_MCP_WORKDIR_ROOTS`/`terminal.cwd`/SOUL.md conventions updated to match;
-  services restarted and re-verified live (janitor walks fleet/ paths, merge-gate clean, clawhip
-  polling, coordinator MCP env confirmed). Glob-sweep open question resolved by the move.
-- 2026-07-07 (state-dir rename) — On-disk identifiers now match the component name:
-  `STATE_DIR` moved `~/.repo-bot` → `~/.gjc-bot` (ledgers/locks/logs intact) and every
-  `REPO_BOT_*` env override is now `GJC_BOT_*` (gjc-bot-scripts commit `11b32a7`);
-  `issue-spool-adapter.path` reinstalled watching the new spool path. Same commit fixed a stale
-  handler-template instruction that still sourced `lib/discord-embed.sh` from the dead
-  `~/scripts/repo-bot` path (Phase 8 embed block). Verified live: all four lanes ran clean, and
-  a spool append at the new path fired the path unit within seconds.
-- 2026-07-07 (gjc-fleet monorepo + user-units migration) — The standalone `gjc-bot-scripts` repo
-  is archived (pointer README, history preserved via merge); the pipeline now lives as the
-  `pipeline/` subdirectory of the `engels74-bot/gjc-fleet` monorepo, stage-dir layout unchanged
-  (`intake/ run/ review/ maintenance/ lib/`). The `systemd/` unit templates moved up one level, to
-  `gjc-fleet`'s repo root (shared with clawhip/relay units, not pipeline-specific). All four
-  gjc-bot systemd units moved from system-level to **user-scope** (`~/.config/systemd/user/`, no
-  `sudo`), rendered from `gjc-fleet/systemd/*` and installed by `render/render.sh apply --units`;
-  each gained `EnvironmentFile=-%h/.gjc-bot/gjc-bot.env`. The three previously hard-coded numeric
-  Discord channel defaults (`issue-spool-adapter.sh`, `merge-gate.sh`, the review-handler template
-  constant) were **removed from the repo** — `ISSUE_NOTIFY_CHANNEL`/`MERGE_GATE_CHANNEL`/
-  `REVIEW_NOTIFY_CHANNEL` now hard-fail (`:?`) unless supplied by the rendered `gjc-bot.env`, and
-  `review-run.sh` `sed`-fills `NOTIFY_CHANNEL` into the handler prompt from
-  `REVIEW_NOTIFY_CHANNEL`. `~/scripts/backuprestore/restore.sh`'s stale `rm -rf
-  ~/scripts/repo-bot` line was removed and the script made dual-scope (tears down user units, then
-  any `/etc/systemd/system/` leftovers); `backup-now.sh` now captures a user-unit manifest
-  (including the `merge-*` glob) plus a whole-`gjc-fleet`-repo manifest. Verified live: five
-  pipeline triggers exercised end-to-end (timers scheduled correctly, the path unit fired ≤4 s on
-  a spool append, all oneshots `Result=success`).
+- 2026-07-09 (v2-current-state rewrite) — Doc set rebaselined to current state; prior history in git.
+  This page: automerge + fleet-update + tmux-reaper lanes documented; ci-fixer author scope, policy
+  re-arm, and K lock-topology added; engine dispatch (gjc) + cutover-complete; stale gjc-reap/push-race
+  questions resolved.
+- 2026-07-09 — Folded in the gated in-lock bot self-approval step (`ensure_approved`, `AUTOMERGE_APPROVE`,
+  default OFF): after the CI re-check, before the merge, ledger-deduped per sha.

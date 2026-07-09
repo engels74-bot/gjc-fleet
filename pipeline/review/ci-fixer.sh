@@ -14,12 +14,15 @@
 # Disabled or marker present => exit 0 quietly (zero fixer records).
 #
 # ── Scope ─────────────────────────────────────────────────────────────────────────────────
-# BOT-AUTHORED PRs ONLY (author login == the bot login). Automated-author (renovate/
-# dependabot) and human PRs are NEVER touched — upstream bots force-push over fleet commits,
-# so a fix commit there would be clobbered and the loop would churn.
+# Open PRs whose author login is a member of CI_FIXER_AUTHORS (default: the bot + renovate[bot]
+# + dependabot[bot]; humans addable via config). The old BOT-AUTHORED-ONLY restriction existed
+# because upstream bots force-push over fleet commits, clobbering a fix commit and churning the
+# loop — that risk is now mitigated by Workstream C (rebaseWhen:conflicted) + D (containment/
+# re-arm), so automated-author PRs are back in scope by default.
 #
 # ── PR state machine (per open bot PR, on HEAD sha) ───────────────────────────────────────
 #   ci_state == GREEN|PENDING|NONE  -> skip (zero fixer records).
+#   ci_state == UNKNOWN             -> defer (gh API failure, NOT no-CI): never a fix attempt.
 #   ci_state == RED                 -> already gave up on this PR  -> skip.
 #                                      caps exhausted (per-sha OR per-pr) -> give up ONCE.
 #                                      backoff not elapsed          -> skip this poll.
@@ -56,6 +59,9 @@ CI_FIXER_ENABLED="${CI_FIXER_ENABLED:-0}"
 MAX_PER_SHA="${CI_FIXER_MAX_PER_SHA:-2}"
 MAX_PER_PR="${CI_FIXER_MAX_PER_PR:-5}"
 BACKOFF_BASE_MINS="${CI_FIXER_BACKOFF_BASE_MINS:-10}"
+# Author scoping (rendered from [ci_fixer].authors). Space-joined login list; a lone "-" is
+# the A1 sentinel for the EMPTY set (rendered from `authors = []`) so the fixer touches no one.
+CI_FIXER_AUTHORS="${CI_FIXER_AUTHORS:-$BOT renovate[bot] dependabot[bot]}"
 DRY_RUN="${DRY_RUN:-0}"
 
 # Discord routing — reuse the already-rendered numeric IDs (numeric IDs never live in the
@@ -71,6 +77,9 @@ export PATH="$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.local/bin:/home/linuxbrew/.l
 # Shared JSONL ledger helpers (per-file flock) for caps / backoff / give-up bookkeeping.
 # shellcheck source=pipeline/lib/ledger.sh
 source "$SCRIPTS_DIR/lib/ledger.sh"
+# Shared author matching (normalises `app/renovate` vs `renovate[bot]`; see the file).
+# shellcheck source=pipeline/lib/authors.sh
+source "$SCRIPTS_DIR/lib/authors.sh"
 # Shared CI-state classifier (single source of truth for ci_state; identical to merge-gate).
 # shellcheck source=pipeline/lib/gh-ci.sh
 source "$SCRIPTS_DIR/lib/gh-ci.sh"
@@ -90,6 +99,14 @@ export GH_TOKEN
 # merge-gate.sh / review-detector.sh; `review` and gjc worktrees are never targets.
 list_bot_repos() { ( shopt -s nullglob; for d in "$GH_ROOT"/*/; do d="${d%/}"; b="${d##*/}"; case "$b" in review|*.gajae-code-worktrees) continue ;; esac; [ -d "$d/.git" ] && printf '%s ' "$b"; done ); }
 REPOS="${CI_FIXER_REPOS:-$(list_bot_repos)}"
+
+# is_ci_fixer_author <login> -> 0 if <login> is in CI_FIXER_AUTHORS. Delegates to
+# author_matches (lib/authors.sh), which normalises the App-login mismatch (`gh` emits
+# `app/renovate` while config lists `renovate[bot]`) and preserves the "-" empty-set
+# sentinel + glob-safe token splitting. Mirrors review-detector.sh's is_automated_author().
+is_ci_fixer_author() {
+  author_matches "$1" "$CI_FIXER_AUTHORS"
+}
 
 # ── kill-switch gate ──────────────────────────────────────────────────────────────────────
 # Returns 0 (proceed) only when enabled AND no disable marker; otherwise logs + fails.
@@ -133,22 +150,21 @@ give_up() {
   log "GAVE UP $full#$pr sha=$sha (caps exhausted)"
 }
 
-# launch_fix <repo> <full> <pr> <sha> — record the attempt (BOTH ledger keys, one ts) and
-# fire the detached bounded run + a ci-fix "started" embed. The caller has already confirmed
-# caps + backoff allow it and holds a fresh non-blocking pre-check on review-<repo>.lock.
+# launch_fix <repo> <full> <pr> <sha> — fire the detached bounded run + a ci-fix "started"
+# embed. The attempt was ALREADY recorded (BOTH #try keys, one ts) and caps + backoff already
+# confirmed by consider_pr WHILE it held review-<repo>.lock (K4 atomicity); that lock has since
+# been RELEASED so the detached run can re-acquire it BLOCKING. DRY_RUN is likewise handled in
+# consider_pr (would-launch logged, nothing recorded), so this path only runs for real launches.
 launch_fix() {
   local repo="$1" full="$2" pr="$3" sha="$4"
-  if [ "$DRY_RUN" = "1" ]; then log "DRY_RUN would launch ci-fix run + record attempt: $full#$pr sha=$sha"; return 0; fi
-  ledger_mark "$LEDGER" "${full}#pr:${pr}#try"
-  ledger_mark "$LEDGER" "${full}#sha:${sha}#try"
   local attempt rc; attempt="$(ledger_count "$LEDGER" "${full}#pr:${pr}#try")"
   log "launching ci-fix run: $full#$pr sha=$sha attempt=$attempt"
   "$RUNNER" --repo "$repo" --number "$pr" --sha "$sha" --stage ci-fix; rc=$?
   if [ "$rc" -ne 0 ]; then
     # The detached run never launched (e.g. ensure_checkout failed). The attempt is
-    # still recorded above so a persistently-failing launch escalates via the give-up
-    # cap instead of retrying forever, but do NOT announce a "started" run that isn't:
-    # the operator would otherwise wait on an outcome that never arrives.
+    # still recorded (in consider_pr) so a persistently-failing launch escalates via the
+    # give-up cap instead of retrying forever, but do NOT announce a "started" run that
+    # isn't: the operator would otherwise wait on an outcome that never arrives.
     log "runner failed to launch for $full#$pr (rc=$rc) — skipping 'started' embed"
     return 1
   fi
@@ -177,51 +193,70 @@ backoff_elapsed() {
 # ledger/lock logic on top of ci_state(); the network-touching bits (ci_state, gh, embeds,
 # the run launch) are the only impure calls, all individually stubbable for the test.
 consider_pr() {
-  local repo="$1" full="$2" pr="$3" sha="$4" st count_sha count_pr lock
+  local repo="$1" full="$2" pr="$3" sha="$4" st lock rc
   st="$(ci_state "$full" "$sha")"
   if [ "$st" != "RED" ]; then log "skip $full#$pr: CI=$st (sha=$sha)"; return 0; fi
 
   # Already terminal for this PR? Nothing further (even on a new sha) — a human owns it now.
   if ledger_seen "$LEDGER" "${full}#pr:${pr}#gaveup"; then log "skip $full#$pr: already gave up"; return 0; fi
 
-  count_sha="$(ledger_count "$LEDGER" "${full}#sha:${sha}#try")"
-  count_pr="$(ledger_count "$LEDGER" "${full}#pr:${pr}#try")"
-
-  # Caps (either exhausted) -> terminal give-up (once).
-  if [ "$count_sha" -ge "$MAX_PER_SHA" ] || [ "$count_pr" -ge "$MAX_PER_PR" ]; then
-    log "$full#$pr caps exhausted (sha $count_sha/$MAX_PER_SHA, pr $count_pr/$MAX_PER_PR) — giving up"
-    give_up "$full" "$pr" "$sha"
-    return 0
-  fi
-
-  # Exponential backoff since the last per-pr attempt.
-  if ! backoff_elapsed "$full" "$pr" "$count_pr"; then
-    log "skip $full#$pr: backoff not elapsed (attempt ${count_pr}, base ${BACKOFF_BASE_MINS}m)"
-    return 0
-  fi
-
-  # Non-blocking per-repo lock PRE-CHECK — the detached run holds it BLOCKING. Busy => defer
-  # to the next poll WITHOUT recording an attempt (so a busy repo never burns a cap slot).
+  # K4 count-then-mark ATOMICITY: hold review-<repo>.lock across the cap COUNTS *and* the #try
+  # MARKING so two overlapping polls can never both read "under cap" and double-launch. The
+  # acquire is NON-BLOCKING: a busy lock means a fix run already owns this repo, so we DEFER
+  # (record NOTHING, no launch — a busy repo never burns a cap slot). Because the detached run
+  # RE-acquires this SAME lock BLOCKING, we MARK here then RELEASE (close fd 9 by leaving the
+  # subshell) BEFORE launching — holding it across the handler's lifetime would deadlock.
   lock="$STATE_DIR/review-${repo}.lock"
-  if ! "$FLOCK" -n "$lock" true; then
-    log "defer $full#$pr: review-${repo}.lock busy"
-    return 0
-  fi
-
-  launch_fix "$repo" "$full" "$pr" "$sha"
+  (
+    "$FLOCK" -n 9 || exit 75                                     # busy -> defer
+    local count_sha count_pr
+    count_sha="$(ledger_count "$LEDGER" "${full}#sha:${sha}#try")"
+    count_pr="$(ledger_count "$LEDGER" "${full}#pr:${pr}#try")"
+    # Caps (either exhausted) -> terminal give-up (once).
+    if [ "$count_sha" -ge "$MAX_PER_SHA" ] || [ "$count_pr" -ge "$MAX_PER_PR" ]; then
+      log "$full#$pr caps exhausted (sha $count_sha/$MAX_PER_SHA, pr $count_pr/$MAX_PER_PR) — giving up"
+      give_up "$full" "$pr" "$sha"
+      exit 10
+    fi
+    # Exponential backoff since the last per-pr attempt.
+    if ! backoff_elapsed "$full" "$pr" "$count_pr"; then
+      log "skip $full#$pr: backoff not elapsed (attempt ${count_pr}, base ${BACKOFF_BASE_MINS}m)"
+      exit 11
+    fi
+    if [ "$DRY_RUN" = "1" ]; then
+      log "DRY_RUN would launch ci-fix run + record attempt: $full#$pr sha=$sha"
+      exit 12
+    fi
+    # Record the attempt (BOTH keys) under the lock, then release + launch OUTSIDE the subshell.
+    ledger_mark "$LEDGER" "${full}#pr:${pr}#try"
+    ledger_mark "$LEDGER" "${full}#sha:${sha}#try"
+    exit 0
+  ) 9>"$lock"
+  rc=$?
+  case "$rc" in
+    75) log "defer $full#$pr: review-${repo}.lock busy"; return 0 ;;
+    0)  launch_fix "$repo" "$full" "$pr" "$sha" ;;
+    *)  return 0 ;;                                              # 10 give-up / 11 backoff / 12 dry-run (all logged in-lock)
+  esac
 }
 
 main() {
+  # K5 self single-flight: one poll pass at a time. The systemd timer can fire while a slow
+  # pass is still walking repos; a second overlapping poller would double-count/-launch.
+  # Non-blocking: on contention log + exit 0 cleanly (the running pass owns this tick). Inside
+  # main() so the CI_FIXER_NO_MAIN=1 sourced test path is unaffected.
+  exec 200>"$STATE_DIR/ci-fixer-poll.lock"; "$FLOCK" -n 200 || { log "previous pass still running"; exit 0; }
   gate_open || exit 0
-  local repo full pr sha
+  local repo full pr login sha
   for repo in $REPOS; do
     full="$GH_OWNER/$repo"
-    for pr in $("$GH" pr list -R "$full" --state open --author "$BOT" --json number --jq '.[].number' 2>/dev/null); do
+    while IFS=$'\t' read -r pr login; do
       [ -n "$pr" ] || continue
+      is_ci_fixer_author "$login" || continue
       sha="$("$GH" pr view "$pr" -R "$full" --json headRefOid --jq '.headRefOid' 2>/dev/null)"
       [ -n "$sha" ] || { log "skip $full#$pr: no HEAD sha"; continue; }
       consider_pr "$repo" "$full" "$pr" "$sha"
-    done
+    done < <("$GH" pr list -R "$full" --state open --json number,author --jq '.[] | [.number, .author.login] | @tsv' 2>/dev/null)
   done
   exit 0
 }

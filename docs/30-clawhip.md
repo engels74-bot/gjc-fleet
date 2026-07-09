@@ -1,6 +1,6 @@
 <!--
 status: verified         # draft | reviewed | verified
-last_verified: 2026-07-07
+last_verified: 2026-07-09
 sources:
   - ~/github/engels74/gjc/clawhip/ (ARCHITECTURE.md, README.md, SKILL.md, Cargo.toml, src/)
   - ~/.clawhip/config.toml, ~/.clawhip/clawhip.env (var names only)
@@ -9,8 +9,10 @@ sources:
   - ~/github/engels74-bot/gjc-fleet/pipeline/{intake,maintenance}/, ~/github/engels74-bot/gjc-fleet/render/
   - ~/.config/gjc-fleet/fleet.toml (host-local values; not read for this page's content)
 maintainer_notes: >
-  Edit this file in isolation. Keep headings stable; append to Changelog at the bottom.
-  The relay that sits in front of clawhip's Discord traffic has its own page: 35-gjc-relay.md.
+  Edit this file in isolation. Keep headings stable; Changelog is a single current-state
+  rebaseline entry — rewrite this page to current state rather than appending; prior history
+  lives in git. The relay that sits in front of clawhip's Discord traffic has its own page:
+  35-gjc-relay.md.
 -->
 
 # clawhip
@@ -122,7 +124,7 @@ local_path = "/home/cvps/.gjc-bot/issue-spool.jsonl"  format = "compact"
 with whitelisted fields (`summarize_payload`, `local_file.rs:38-56`) and UTF-8-safe truncation.
 `format=compact` is deliberate so `<repo>#<number> opened: <title>` leads the content and survives
 truncation for the downstream parser (`issue-spool-adapter.sh` — see
-[40-gjc-bot-automation.md](40-gjc-bot-automation.md#issue-spool-adaptersh)).
+[40-gjc-bot-automation.md](40-gjc-bot-automation.md#intakeissue-spool-adaptersh)).
 
 **Consumer side, verified live:** the spool path `/home/cvps/.gjc-bot/issue-spool.jsonl` is watched
 by a **user-scope** systemd **path unit**, `issue-spool-adapter.path` (`PathModified=`,
@@ -229,8 +231,10 @@ from `gjc-fleet/systemd/clawhip.service` (repo-root `systemd/`, not the pipeline
 
 - Is any `slack` sink route live anywhere? (Code exists; live config shows none.)
 - Are the in-repo `integrations/` git/tmux hooks installed in any repo on this machine? (The tmux
-  monitor list is empty and `gjc-reap.sh`'s claimed `tmux.stale` trigger route doesn't exist — see
-  [40-gjc-bot-automation.md](40-gjc-bot-automation.md#discrepancies).)
+  monitor list is empty — see
+  [40-gjc-bot-automation.md](40-gjc-bot-automation.md#discrepancies).) Note this is no longer tied to
+  `gjc-reap.sh`: reap is now wired into the janitor's tmux reaper
+  (`gjc-worktree-janitor.sh`), not any clawhip `tmux.stale` route.
 - Will the `gajae` handler seam be wired up (route action → exec gjc), or does invocation stay with
   gjc-bot?
 - Upstream `ARCHITECTURE.md` is two minor versions stale — worth an upstream refresh or a local
@@ -238,42 +242,6 @@ from `gjc-fleet/systemd/clawhip.service` (repo-root `systemd/`, not the pipeline
 
 ## Changelog
 
-- 2026-07-06 — Initial draft from source + live-runtime research (clawhip 0.6.11).
-- 2026-07-07 — Issue/CI embed routes added to config (see Runtime & config); corrected the false
-  "human notice still appears" claim about the issue-spool route (see The issue spool). Backups:
-  `config.toml.bak-embedbatch-20260707-*`.
-- 2026-07-07 (later) — Verification pass: config.toml size refreshed (5.4→~7.4 KB after the
-  embedbatch routes); wave list extended with `embedbatch`; alarm nuance added (dlq-watch operative,
-  relay-alert rarely fires). Version 0.6.11, routes, monitors, DLQ semantics all re-verified live.
-- 2026-07-07 (later still, ~19:30) — Re-verification pass after the `gjc-bot-scripts` reorg. No
-  in-repo clawhip source/docs reference the old `~/scripts/repo-bot` path (grepped `src/`,
-  `SKILL.md`, `README.md` — clean), so no path fixes were needed inside this page's clawhip-source
-  claims. Added the previously-undocumented consumer side of the issue spool: the live
-  `issue-spool-adapter.path` systemd path unit (`PathModified=/home/cvps/.repo-bot/issue-spool.jsonl`, since renamed to `~/.gjc-bot`)
-  that triggers `issue-spool-adapter.service`, whose `ExecStart=` now correctly points at
-  `.../gjc-bot-scripts/intake/issue-spool-adapter.sh` (confirmed via `systemctl cat`, live and
-  `enabled`/`active`/`waiting`). Tightened the DLQ/`discord.rs` line citations (retry loop, `MAX_ATTEMPTS
-  = 3`, `record_dlq`, the `eprintln!`) and confirmed `gjc-dlq-watch`/`gjc-relay-alert` live states via
-  `systemctl show`. Found and fixed an incomplete HTTP-surface list on `src/daemon.rs`: this page was
-  missing the `/api/native/hook` alias and the `/api/update/{status,approve,dismiss}` endpoints — added.
-  Cross-checked `clawhip.service` live unit (`ExecStart`, `EnvironmentFiles`, `Restart=always`,
-  drop-in) — matches. No numeric Discord IDs added; route channel targets are named only
-  (cross-checked against `~/.hermes/channel_directory.json` and `config.toml`'s own channel IDs,
-  which are not reproduced here).
-- 2026-07-07 (fleet/ move + component rename) — repo-bot → **gjc-bot** terminology; the six
-  `[[monitors.git.repos]] path` entries now point at `~/github/engels74-bot/fleet/<repo>`
-  (config backed up as `.bak-fleetmove-*`, daemon restarted, polling re-verified live).
-- 2026-07-07 (state-dir rename) — The localfile sink now writes the issue spool to
-  `/home/cvps/.gjc-bot/issue-spool.jsonl` (`~/.repo-bot` → `~/.gjc-bot` rename; config backed up
-  as `.bak-gjcbotrename-*`, daemon restarted). Spool consumer path references updated.
-- 2026-07-07 (gjc-fleet monorepo + user-units migration) — `gjc-bot-scripts` merged into the
-  `gjc-fleet` monorepo as its `pipeline/` subdir (spool-adapter `ExecStart=` path updated
-  accordingly). `clawhip.service` moved from a system-level unit to a **user-scope** unit
-  (`~/.config/systemd/user/`, `WantedBy=default.target`, linger enabled, no `sudo`/`User=`),
-  rendered from `gjc-fleet/systemd/clawhip.service`. `config.toml` is now itself a rendered
-  artifact: `render/render.sh` fills a repo-tracked template from
-  `~/.config/gjc-fleet/fleet.toml`, with the 15 `[[routes]]` kept as static template text (never
-  generated) and only the six `[[monitors.git.repos]]` blocks generated per `fleet.toml`'s
-  `[[repos]]`; `render-diff` replaces the dated `.bak-*` convention for this file going forward
-  (existing `.bak-*` snapshots above are untouched, kept as forensic history). Byte-identical gate
-  verified live: the first render reproduced the live `config.toml` exactly.
+- 2026-07-09 (v2-current-state rewrite) — Doc set rebaselined to current state; prior history in git.
+  This page: corrected the gjc-reap.sh open question — reap is now wired into the janitor's tmux
+  reaper (`gjc-worktree-janitor.sh`), not a clawhip `tmux.stale` route.

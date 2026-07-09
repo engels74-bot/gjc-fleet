@@ -1,16 +1,18 @@
 <!--
 status: verified         # draft | reviewed | verified
-last_verified: 2026-07-08
+last_verified: 2026-07-09
 sources:
   - ~/github/engels74-bot/gjc-fleet/pipeline/<stage>/*.sh (the pipeline spine; stage-dir layout)
+  - ~/github/engels74-bot/gjc-fleet/pipeline/lib/engine.sh (engine_run — gjc/claude dispatch)
   - ~/.clawhip/config.toml, ~/github/engels74/gjc/clawhip/src/sink/local_file.rs
   - ~/.hermes/config.yaml, ~/.hermes/cron/jobs.json
   - ~/github/engels74-bot/gjc-fleet/relay/src/{http,policy,queue,flush}.rs (v2 work-item path)
   - ~/.gjc-bot/*.log (live run evidence: mover-status#24 → PR #25; easyhdr#115 review handler ×2)
 maintainer_notes: >
-  Edit this file in isolation. Keep headings stable; append to Changelog at the bottom.
-  This is the heart of the doc set — the end-to-end walk. Component internals belong on
-  the component pages; only integration seams belong here.
+  Edit this file in isolation. Keep headings stable; Changelog is a single current-state
+  rebaseline entry — rewrite this page to current state rather than appending; prior history
+  lives in git. This is the heart of the doc set — the end-to-end walk. Component internals
+  belong on the component pages; only integration seams belong here.
 -->
 
 # Data flow & integration
@@ -25,7 +27,7 @@ maintainer_notes: >
 |---|---|---|---|
 | clawhip → gjc-bot | **Shared file**: appends to `~/.gjc-bot/issue-spool.jsonl` (localfile sink); systemd `.path` unit fires on modify | JSONL, `content` leads with `<repo>#<n> opened: <title>` (compact, ≤240 chars) | `~/.clawhip/config.toml:29-33`; `clawhip src/sink/local_file.rs:75-81` |
 | gjc-bot → gjc | **Subprocess**: `timeout 1800 gjc -p --no-pty "@promptfile"` in a fresh worktree | Prompt file in; gjc's side effects (commits/PR) out; exit code | `pipeline/run/gjc-run.sh:130` |
-| gjc-bot → claude | **Subprocess**: `timeout 5400 claude -p --dangerously-skip-permissions --model opus < filled-prompt` in an isolated checkout | Filled markdown template in; PR mutations out | `pipeline/review/review-run.sh:101` |
+| gjc-bot → review engine | **Subprocess dispatch**: `pipeline/lib/engine.sh` `engine_run` — default engine **gjc** (`gjc -p --no-pty "@<prompt-file>"`); the legacy `claude -p --dangerously-skip-permissions --model opus < filled-prompt` path remains a selectable fallback engine (`REVIEW_ENGINE=claude`), in an isolated checkout | Filled markdown template in; PR mutations out | `pipeline/lib/engine.sh` (`engine_run`); `pipeline/review/review-run.sh:101` |
 | gjc-bot → clawhip | **CLI → loopback HTTP**: `clawhip send` / `clawhip agent <state>` POST to the daemon on 127.0.0.1:25294 | Event JSON; `GJCEMBED1` envelope in message content | `run/gjc-run.sh:49-58`; `lib/discord-embed.sh:61` |
 | gjc-bot → GitHub | **CLI**: `gh api` / `gh pr list` / `gh pr comment` / `gh issue view` | REST JSON | throughout the scripts |
 | gjc-bot → LLM (triage, merge verdict) | **HTTPS**: NanoGPT chat-completions, **no tools** | one-line `ACTIONABLE:`/`SKIP:` or `MERGE_READY:`/`REQUEST_CHANGES:` | `intake/issue-spool-adapter.sh:65-72`; `review/merge-gate.sh:62-70` |
@@ -65,8 +67,9 @@ sequenceDiagram
     participant RUN as gjc-run.sh
     participant GJC as gjc (headless)
     participant DET as review-detector.sh
-    participant REV as review-run.sh + claude
+    participant REV as review-run.sh + engine
     participant MG as merge-gate.sh
+    participant AM as automerge.sh
     participant HU as Human
 
     GH-->>CH: monitor poll (60 s): issue opened in <repo>
@@ -94,16 +97,21 @@ sequenceDiagram
     DET->>GH: gh api — last augmentcode[bot] review
     DET->>REV: has "N suggestions" → review-run.sh --pr --review <id>
     REV->>REV: isolated checkout review/<repo>; fill template; flock review.lock
-    REV->>GH: claude -p applies suggestions, pushes, replies on PR
+    REV->>GH: engine_run (gjc) applies suggestions, pushes, replies on PR
     REV->>CH: clawhip agent finished → embed
     SD->>MG: merge-gate.timer (10 min)
     MG->>GH: CI state on HEAD sha (checks + statuses)
+    Note over MG: gh API failure → UNKNOWN (one retry); UNKNOWN is always treated as defer, never NONE/green (K2)
     MG->>LLM: diff review (NO tools) when GREEN
     LLM-->>MG: "MERGE_READY: …" (or REQUEST_CHANGES)
     MG->>GH: gh pr comment (advisory verdict)
     MG->>CH: discord_embed merge-gate.advisory
     CH->>RL: → RL->>DC: verdict embed in #gjc-approvals
-    HU->>GH: reviews and merges the PR
+    alt automated author (renovate[bot] / dependabot[bot]) — automerge lane
+        AM->>GH: CI-green + advisory settled → gh pr merge --squash --match-head-commit (gated: automerge_enabled=false today)
+    else non-automated author
+        HU->>GH: reviews and merges the PR
+    end
 ```
 
 Key invariants along the way:
@@ -220,11 +228,6 @@ Guild: "engels74's server". Channels (names only; numeric IDs live in the config
 
 ## Open questions
 
-- Does the coordinator (interactive) lane ever contend with the automated lane on the same repo?
-  The lanes use different worktrees but the same clones/remotes; no lock spans both. **No longer
-  hypothetical:** a cross-lane push race on a shared PR branch was observed 2026-07-07
-  (easyhdr#115); behaviorally mitigated via SOUL.md rebase-before-push rules, structural lock
-  still open — see [40-gjc-bot-automation.md](40-gjc-bot-automation.md#open-questions).
 - Is there any path by which hermes learns of pipeline outcomes besides reading Discord (e.g.
   polling the coordinator or the ledgers)? None found.
 - `github.pr-status-changed` events feed the per-repo channels; whether merge-gate's verdict
@@ -232,37 +235,6 @@ Guild: "engels74's server". Channels (names only; numeric IDs live in the config
 
 ## Changelog
 
-- 2026-07-06 — Initial draft; sequence validated against the live mover-status#24 → PR #25 run.
-- 2026-07-07 — Verification pass: seams re-verified against current scripts/configs. Review lane
-  marked operational (template restored + live-verified); issue-opened step now reflects the
-  explicit embed route; hermes cron seam scoped to the two wrapper jobs (a third, self-scheduled
-  agent job now exists); relay seam notes batch splitting; the cross-lane push race is now
-  observed fact (easyhdr#115), not inference.
-- 2026-07-07 (reorg re-verify) — Repo renamed `gjc-bot` → `gjc-bot-scripts` and reorganized into
-  pipeline stage-dirs; the dead `~/scripts/repo-bot/` path is gone. Re-verified all gjc-bot seam
-  rows against live source and rewrote every `path:line` citation to the new stage-dir paths
-  (gjc-run `run/…:130`, review-run `review/…:101`, adapter `intake/…:65-72`, merge-gate
-  `review/…:62-70`, review-detector `review/…:47-49`, discord-embed `lib/…:61`). Confirmed clawhip
-  seam anchors unchanged (`config.toml:29-33`, `local_file.rs:78` truncate-240, relay MAGIC/
-  ALLOWED_KEYS `:22-23`). hermes→gjc-bot row now records the real-file wrapper indirection
-  (`~/.hermes/scripts/*` exec the stage-dir scripts). Status → verified.
-- 2026-07-07 (fleet/ move + component rename) — Terminology only: repo-bot → **gjc-bot** in the
-  seam tables and channel matrix; cross-links updated to `40-gjc-bot-automation.md`. Seam
-  mechanics unchanged (repo paths inside `GH_ROOT` now resolve under
-  `~/github/engels74-bot/fleet/`).
-- 2026-07-07 (state-dir rename) — Seam paths updated for the `~/.repo-bot` → `~/.gjc-bot`
-  rename (spool, ledgers, locks, logs). Seam mechanics unchanged.
-- 2026-07-07 (gjc-fleet monorepo + user-units migration) — Light-touch path sweep: seam-table
-  citations (`gjc-run.sh`, `review-run.sh`) and the sources header now point at
-  `gjc-fleet/pipeline/<stage>/` instead of the archived standalone `gjc-bot-scripts` repo; the
-  hermes→gjc-bot seam row now says "the `gjc-fleet` monorepo's `pipeline/` subdir". Seam mechanics,
-  the sequence diagram, and the Discord topology are all unaffected by the migration.
-- 2026-07-08 (notification overhaul — v2 work-item path) — Added the "v1 pass-through vs v2 work-item
-  narration" section with a new managed-path sequence diagram (clawhip POST → relay absorb → fsync
-  queue op → synthetic 200 → flush thread coalesces/paces → Discord living-summary edit + per-item
-  thread), and called out where the unknown-item `github.ci-*` Drop kills the reboot/branch-push
-  flood. Updated the clawhip→Discord seam row for the v2 absorb behaviour (empty
-  `RELAY_WORKITEM_CHANNELS` ⇒ byte-identical v1) and repointed its citation from the retired single
-  `~/.gjc-relay/src/main.rs` to the relay's `{http,policy,queue,flush}.rs`. Added the "managed delivery
-  stuck" failure path (health-watch + `dead/` burial). The existing end-to-end issue diagram and the
-  Discord topology are unchanged. Verified against the actual relay source.
+- 2026-07-09 (v2-current-state rewrite) — Doc set rebaselined to current state; prior history in git.
+  This page: review-handler seam described as engine-dispatched (gjc); sequence diagram gains
+  the gated automerge terminal step for automated-author PRs.

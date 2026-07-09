@@ -1,13 +1,14 @@
 <!--
 status: verified         # draft | reviewed | verified
-last_verified: 2026-07-07
+last_verified: 2026-07-09
 sources:
   - ~/.omc/ (progress.txt, plans/discord-unification-plan.md, research/discord-unification-findings.md)
   - all component pages in this directory
 maintainer_notes: >
-  Edit this file in isolation. Keep headings stable; append to Changelog at the bottom.
-  When a component page resolves one of the open questions below, delete it here and
-  note the resolution in that page's changelog.
+  Edit this file in isolation. Keep headings stable; Changelog is a single current-state
+  rebaseline entry — rewrite this page to current state rather than appending; prior history
+  lives in git. When a component page resolves one of the open questions below, delete it here
+  and note the resolution in that page's changelog.
 -->
 
 # Glossary & open questions
@@ -36,7 +37,7 @@ maintainer_notes: >
 | **DLQ / bury** | clawhip's dead-letter queue: in-memory only; a "buried" notification is permanently lost. `gjc-dlq-watch` alarms on it |
 | **spool** | `~/.gjc-bot/issue-spool.jsonl` — the JSONL queue clawhip writes `github.issue-opened` records to; the pipeline's inbox |
 | **merge gate** | Advisory, comment-only LLM verdict on CI-green bot PRs (`MERGE_READY`/`REQUEST_CHANGES`); never merges |
-| **the janitor / reap** | `gjc-worktree-janitor.sh` (crash-net for orphaned run worktrees) and `gjc-reap.sh` (manual tree-kill of a jammed run) |
+| **the janitor / reap** | `gjc-worktree-janitor.sh` (crash-net for orphaned run worktrees, plus an age-based **coordinator tmux reaper** sweep) and `gjc-reap.sh` (tree-kill of a jammed run). Reap is now wired into the janitor's tmux sweep — it reaps a `gjc-coordinator-*` session iff its state ∈ {completed,stale}, `live==false`, and `updated_at` older than `JANITOR_TMUX_GRACE_SECONDS` (default 30 min); gated `[janitor].tmux_reap_enabled` (default OFF) + `DRY_RUN`. Not manual-only. [40-gjc-bot-automation.md](40-gjc-bot-automation.md) |
 | **single-flight** | The `flock`-based one-run-at-a-time discipline per lane (`gjc.lock`, `review.lock`) |
 | **engels74-bot** | The dedicated bot GitHub identity (Write collaborator) authoring all automated PRs |
 | **augmentcode[bot]** | External GitHub app that auto-reviews PRs; its "N suggestions" reviews trigger the review lane |
@@ -51,87 +52,74 @@ maintainer_notes: >
 | **managed / unmanaged surface** | A **managed** surface is a channel opted into the v2 work-item path (`workitem_surface = true` → `RELAY_WORKITEM_CHANNELS`); an **unmanaged** surface is a plain post-per-event channel (the v1 behaviour, and the default for every channel). [45-fleet-config.md](45-fleet-config.md) |
 | **deferred-mark** | The HARD B-2 invariant: the one-review policy writes a PR's `#consumed` marker under the per-repo `review-<repo>.lock`, after an in-lock review-id re-check and before release — never "whenever a launch happens" — guaranteeing exactly-one consumption under racing pollers. [40-gjc-bot-automation.md](40-gjc-bot-automation.md#one-review-policy-automated-author-prs) |
 | **engine vs brain lane** | The two LLM lanes of the pipeline: the **ENGINE** lane runs coding-work invocations via `lib/engine.sh` on `[review].engine` (gjc default); the **BRAIN** lane runs no-tools VERDICT invocations on NanoGPT (`BRAIN_MODEL`). The split is the injection-safety boundary. [40-gjc-bot-automation.md](40-gjc-bot-automation.md#llm-invocation-lanes-engine-vs-brain) |
+| **engine dispatch / `REVIEW_ENGINE`** | The review/policy/ci-fix handlers run coding work via `pipeline/lib/engine.sh` `engine_run` on `[review].engine` (`REVIEW_ENGINE`); **`gjc` is live** (`gjc -p --no-pty "@<prompt>"`), with the legacy headless `claude -p` kept as a selectable fallback (no longer active). `MODEL_PRIMARY`/`MODEL_FAST` apply only to the `claude` engine — inert under gjc, which inherits its own Codex backend. [40-gjc-bot-automation.md](40-gjc-bot-automation.md) |
+| **automerge lane** | `pipeline/review/automerge.sh` — synchronous, oldest-first squash-merge of CI-green automated-author PRs under the per-repo `review-<repo>.lock`, re-fetching head + re-checking CI in-lock, merging with `gh pr merge --squash --match-head-commit <sha>`. Fail-closed if `--match-head-commit` is unsupported (one `automerge.escalation` embed, never calls `gh pr merge`). Default-OFF (`automerge_enabled=false`; canary pending). [40-gjc-bot-automation.md](40-gjc-bot-automation.md) |
+| **fleet-update lane** | `pipeline/maintenance/fleet-update.sh` — nightly (~03:30) quiesce-then-update orchestrator: blocking-with-timeout on `gjc.lock`+`review.lock` and zero live coordinators, then `tool-update.sh` (headless update-ai port; re-asserts `fleet.toml` tool pins via an EXIT trap) then `hermes-update.sh` (gateway update + health-gated rollback), release, `verify.sh`, one `fleet-update` summary embed. Default-OFF. [40-gjc-bot-automation.md](40-gjc-bot-automation.md) |
+| **per-repo review lock (K1)** | `review-<repo>.lock` — `review-run.sh` `_handler` takes it INSIDE the global `review.lock`; `ci-fixer-run.sh` and `automerge.sh` take ONLY the per-repo lock. Deadlock-free by construction; scopes `ensure_checkout`'s `git checkout -f` and every merge critical section per repo. [40-gjc-bot-automation.md](40-gjc-bot-automation.md) |
+| **policy re-arm / head containment** | Force-push resilience (D): the policy lane records `#policy-pushed:<sha>`; `review-detector.sh` re-arms the same review-id when that head is **not contained** in the current head (deduped per head lineage), capped by `REVIEW_POLICY_MAX_REARMS` (default 2), escalate-once on cap. Containment via `review-shared.sh` `head_contains()` (compare API: identical/ahead ⇒ no re-arm; behind/diverged ⇒ re-arm; empty ⇒ defer); reused by ci-fixer and automerge defer conditions |
+| **`review.backlog` signal** | Embed kind `review-detector.sh` emits (K7) when the oldest-unhandled-PR age exceeds `REVIEW_BACKLOG_ALERT_MINS` (default 120); silent under threshold. Backstop for the fleet-wide serial-review single-flight (per-repo review concurrency remains a documented follow-up, made safe by K1) |
+| **UNKNOWN CI state** | New `pipeline/lib/gh-ci.sh` `ci_state` return (K2) on gh API failure after one retry; all callers (merge-gate, ci-fixer, automerge) treat UNKNOWN as **defer**, never as NONE/green |
+| **empty-list sentinel (`-`)** | render.sh renders an empty TOML list (e.g. `automated_authors=[]`) as a literal `-` (e.g. `REVIEW_AUTOMATED_AUTHORS=-`) — `-` matches no login, avoiding the `:-` default footgun and subst.sh's empty-var hard-fail. Same pattern on the other new list knobs. [45-fleet-config.md](45-fleet-config.md) |
 
-## The 2026-07-06/07 configuration waves (backup-file timeline)
+## The configuration & automation waves (backup-file / git timeline)
 
-Dated `.bak-*` files pin the order: `phaseg` (16:48) → `g7` (18:31, issue-spool route + 6-repo
-fan-out) → `discord` (20:49–21:35, relay + templates + embed helper) → `yolo`/`workdir`/`workspace`
-(23:19–23:25, hermes approvals-off + terminal.cwd + SOUL.md workspace rules) →
-`embedbatch` (2026-07-07 01:52, post-EasyHDR-RUSTSEC run: clawhip issue/CI embed routes, relay
-multi-envelope batch splitting, design-system 17→23 kinds). Separately on 2026-07-07 (~13:00,
-no `.bak` marker): hermes' brain model switched from NanoGPT/`minimax-m3` to the Codex
-subscription (`gpt-5.5`, OAuth via `auth.json`). The earlier build-log's Phase G log ended before
-the discord wave — which is why that (now-retired) log never mentioned the relay.
+This is a current-state rebaseline; prior-wave detail is compressed here and lives in full in git.
 
-**2026-07-07 repo-move wave (no `.bak` markers — git-tracked renames).** Two GitHub repos were
-renamed and the pipeline scripts relocated: `engels74-bot/gjc-bot` → **`gjc-bot-scripts`** (flat dir
-reorganized into `intake/`, `run/`, `review/`, `maintenance/`, `lib/`, `systemd/`) and
-`engels74-bot/server-tool` → **`gjc-server-tool`** (the stackman TUI console; package/entrypoints
-unchanged). The old `~/scripts/repo-bot/` tree is gone; scripts now self-locate their repo root
-(`SCRIPTS_DIR` derived from `BASH_SOURCE`, fixing a runtime break where `issue-spool-adapter` could
-not source `lib/discord-embed.sh`). The four gjc-bot systemd units were reinstalled to
-`/etc/systemd/system/` (`ExecStart=` under `…/gjc-bot-scripts/<subfolder>/`, `daemon-reload`, all
-`Result=success`), and the hermes cron real-file wrappers re-`exec` the new subfolder paths. These
-architecture docs also moved from `~/documentation/architecture/` into the `gjc-architecture` git
-repo (a stale copy remains under `~/documentation/architecture/`).
-> [inferred] The `~/documentation/architecture/` copy is a pre-move leftover, not a maintained fork.
+**Prior waves (2026-07-06 → 07), compressed.** The Discord-unification evening ran `.bak` order
+`phaseg` (16:48) → `g7` (18:31, issue-spool route + 6-repo fan-out) → `discord` (20:49–21:35, relay +
+templates + embed helper) → `yolo`/`workdir`/`workspace` (23:19–23:25, hermes approvals-off +
+`terminal.cwd` + SOUL.md workspace rules) → `embedbatch` (2026-07-07 01:52, clawhip issue/CI embed
+routes + relay multi-envelope batching + design-system 17→23 kinds), standing up gjc-relay and the
+embed pipeline; hermes' conversational brain then moved from NanoGPT/`minimax-m3` to the Codex
+subscription (`gpt-5.5`). A run of 2026-07-07 structural moves followed: the pipeline repo
+`engels74-bot/gjc-bot` → `gjc-bot-scripts` (stage-based reorg into `intake/ run/ review/ maintenance/
+lib/ systemd/`, script self-location via `SCRIPTS_DIR`) and `server-tool` → `gjc-server-tool`; the six
+working clones + their `*.gajae-code-worktrees/` buckets relocated under
+`~/github/engels74-bot/fleet/` (all `GH_ROOT`/monitor-path/hermes-workdir pointers re-pointed); the
+component name settled on **gjc-bot** with the on-disk `~/.repo-bot` → `~/.gjc-bot` / `REPO_BOT_*` →
+`GJC_BOT_*` rename; the relay crate adopted into its own repo. Then all three component repos
+(`gjc-relay`, `gjc-bot-scripts`, this doc set's `gjc-architecture`) were consolidated into the
+**`engels74-bot/gjc-fleet`** monorepo (`pipeline/ relay/ render/ systemd/ docs/`, predecessors
+archived with pointer READMEs), a new **three-layer config model** introduced (repo templates → host
+`~/.config/gjc-fleet/fleet.toml` → `render/render.sh` artifacts, replacing the dated `.bak-*`
+hand-edit convention), and every fleet systemd unit cut over system→user-scope (linger, no `sudo`).
+`gjc-relay.service` traded namespace sandboxing (`ProtectSystem`/`ProtectHome`/`PrivateTmp`) for
+namespace-free hardening to dodge an Ubuntu ≥24.04 AppArmor start-failure; hard-coded numeric Discord
+channel defaults were removed from the pipeline scripts in favor of a hard-fail-unless-set
+`~/.gjc-bot/gjc-bot.env` contract. The old `/etc/systemd/system/` fleet units were deleted 2026-07-08
+(soak skipped; reboot test still pending).
 
-**2026-07-07 fleet/ move + component rename (`.bak-fleetmove-*` markers in `~/.clawhip` and `~/.hermes`).**
-The six working clones, their `*.gajae-code-worktrees/` buckets, and the `review/` checkouts moved
-from `~/github/engels74-bot/` into `~/github/engels74-bot/fleet/`, leaving the root to the bot's
-own `gjc-*` repos. Re-pointed in the same wave: all eight scripts' `GH_ROOT` default
-(gjc-bot-scripts commit `59142f9`), clawhip's six `[[monitors.git.repos]] path`s, hermes'
-`GJC_COORDINATOR_MCP_WORKDIR_ROOTS` + `terminal.cwd` + SOUL.md workspace conventions; the two git
-worktree link files were repaired to the new absolute paths, clawhip + hermes-gateway restarted,
-and all lanes re-verified live. The doc set simultaneously settled the component name **gjc-bot**
-(formerly written "repo-bot"; page 40 renamed accordingly — and the on-disk rename followed the
-same evening: `~/.gjc-bot` → `~/.gjc-bot`, `GJC_BOT_*` → `GJC_BOT_*`, the spool sink, path
-unit, and backup tooling re-pointed).
-
-**2026-07-07 gjc-relay repo adoption (no `.bak` markers — git is the history now).** The last
-un-versioned component gained a repo: the relay crate moved from `~/.gjc-relay/src` (built in
-place) into **`engels74-bot/gjc-relay`** at `~/github/engels74-bot/gjc-relay` (crate +
-`runtime/` copies of the authored runtime artifacts + README + prek.toml; pushed, public like its
-siblings). Rebuilt from the repo (17 tests, binary byte-identical to the deployed one),
-redeployed with a ~1 s restart, canary-verified in `#gjc-lab`; then
-`~/.gjc-relay/{src,Cargo.toml,Cargo.lock,target}`, the `.bak-embedbatch-*` files, and
-`~/.gjc-relay-build` were removed, leaving `~/.gjc-relay` a pure runtime home like
-`~/.clawhip`/`~/.hermes`. `backup-now.sh` gained a manifest line for the new repo.
-
-**2026-07-07 gjc-fleet monorepo + user-units migration (later the same day; no `.bak` markers —
-git merges are the history).** Three repos — the just-adopted `gjc-relay`, the reorganized
-`gjc-bot-scripts`, and this doc set's `gjc-architecture` — were consolidated into one monorepo,
-**`engels74-bot/gjc-fleet`** (`pipeline/` `relay/` `render/` `systemd/` `docs/`), each old repo
-archived on GitHub with a pointer README, full history preserved via merge. A new **three-layer
-config model** was introduced: `gjc-fleet` templates → host-local, untracked
-`~/.config/gjc-fleet/fleet.toml` → rendered artifacts, produced by the new `render/render.sh`
-(`render|diff|apply|check|doctor`), which replaces the historical dated `.bak-*` hand-edit
-convention going forward. Every fleet systemd unit — clawhip, the full relay supervision stack,
-and all four gjc-bot units — moved from system-level (`/etc/systemd/system/`) to **user-scope**
-(`~/.config/systemd/user/`, linger enabled, no `sudo`); unit templates moved to `gjc-fleet`'s
-repo-root `systemd/`. `hermes-gateway.service` was the one exception, regenerated in user scope by
-`hermes gateway install` itself. `gjc-relay.service`'s hardening changed as part of the move:
-`ProtectSystem`/`ProtectHome`/`PrivateTmp` dropped (unprivileged user namespaces are a start-failure
-risk under Ubuntu ≥24.04's AppArmor restriction) in favor of namespace-free directives
-(`NoNewPrivileges`, `RestrictRealtime`, `LockPersonality`, `SystemCallArchitectures=native`,
-`RestrictNamespaces`, `MemoryDenyWriteExecute`). The three previously hard-coded numeric Discord
-channel defaults in the pipeline scripts were removed from the repo entirely, replaced by a
-hard-fail-unless-set contract against a new rendered `~/.gjc-bot/gjc-bot.env`. Old system-level
-units were disabled but left on disk pending a 24–48 h soak + reboot test before final removal;
-`~/scripts/backuprestore/restore.sh` was made dual-scope for the transition and had its stale
-`rm -rf ~/scripts/repo-bot` line removed. Separately, a hermes hygiene pass fixed a stale cron
-workdir and removed the drifting, spend-drift-failing `monitor-easyhdr-pr115-rustsec` cron job
-(resolving the corresponding open questions on
-[20-hermes-agent.md](20-hermes-agent.md#the-cron-subsystem) and
-[70-deployment-and-operations.md](70-deployment-and-operations.md#open-questions)). Verified live
-end-to-end: five pipeline triggers (timers + the path unit, ≤4 s fire on spool append, all
-`Result=success`); a 2-second relay+clawhip cutover behind a `healthz` gate plus a full DLQ drill
-(relay stopped → doomed canary → DLQ-bury observed in the user journal → `gjc-dlq-watch` alerted
-`#gjc-approvals` in ~6 s → relay restored → post-drill canary 200); `hermes-gateway.service`
-regenerated as a user unit in ~4 s with its `RestartForceExitStatus=75`/`KillMode=mixed`/
-`ExecStopPost` semantics intact; the relay binary rebuilt from the monorepo (17 tests,
-`RELAY_DESIGN_SYSTEM` default now `$HOME`-derived). `/home/cvps` was eliminated from the
-pipeline/relay scripts in favor of `$HOME`-derived paths as part of the same portability push.
+**2026-07-09 — drift fold-back + automation upgrade wave (git-tracked; no `.bak` markers).** The
+current-state wave this rebaseline documents. Landed together, **all new lanes default-OFF** (units
+run live-from-repo, so committed code is live but gated behind OFF switches):
+- **Engine cutover (LIVE):** `REVIEW_ENGINE=gjc` — the review/policy/ci-fix handlers now dispatch
+  through `pipeline/lib/engine.sh` `engine_run` running **gjc** by default (`gjc -p --no-pty
+  "@<prompt>"`); the legacy headless `claude -p` path stays a selectable fallback (no longer active).
+  `MODEL_PRIMARY`/`MODEL_FAST` apply only to the `claude` engine, inert under gjc.
+- **Config-truth fold-back (A2):** new `[review] [review.policy] [ci_fixer] [merge] [janitor]
+  [updates]` sections folded into host `fleet.toml`, all rendered into `~/.gjc-bot/gjc-bot.env` by
+  render.sh (zero hand-pins). Empty-list **sentinel** (`automated_authors=[]` →
+  `REVIEW_AUTOMATED_AUTHORS=-`); `unit_live_path()` user-scope-only; `do_diff` NOTEs disabled-lane
+  units and `do_apply --units` skips them; `.bak` archive-after-30-days-zero-drift policy.
+- **K concurrency hardening:** per-repo `review-<repo>.lock` inside the global `review.lock` (K1);
+  UNKNOWN CI state ⇒ defer (K2); exact `ledger_seen` match + atomic ci-fixer count (K4); per-loop
+  `flock -n <name>-poll.lock` single-flight (K5); `review.backlog` alert embed (K7).
+- **D — force-push resilience:** policy `#policy-pushed:<sha>` snapshot + containment-based re-arm
+  (`head_contains()`), capped by `REVIEW_POLICY_MAX_REARMS` (default 2), escalate-once on cap.
+- **E — ci-fixer author scope:** `[ci_fixer].authors` → `CI_FIXER_AUTHORS` membership gate (default-OFF).
+- **F — automerge lane:** `pipeline/review/automerge.sh` (synchronous oldest-first squash-merge,
+  in-lock CI re-check, `--match-head-commit` capability guard, `automerge`/`automerge.escalation`
+  embeds, new `systemd/automerge.{service,timer}`); `automerge_enabled=false`, canary pending.
+- **I — coordinator tmux reaper + log-prune:** `pipeline/maintenance/gjc-worktree-janitor.sh` gained
+  an age-based `gjc-coordinator-*` tmux sweep (reaps via `gjc-reap.sh`, gated
+  `[janitor].tmux_reap_enabled`) plus a 14-day per-run log-prune.
+- **G — nightly fleet-update lane:** `pipeline/maintenance/fleet-update.sh` orchestrator (quiesce →
+  `tool-update.sh` → `hermes-update.sh` → release → `verify.sh` → one `fleet-update` embed), new
+  `systemd/fleet-update.{service,timer}`.
+- **Design system:** five new embed kinds — `automerge`, `automerge.escalation`, `hermes-update`,
+  `fleet-update`, `review.backlog` — in `relay/runtime/design-system.json`.
+- **Renovate:** canonical `renovate.json` rolled out to all non-fork engels74 repos (33 repos) — see
+  [47-renovate-policy.md](47-renovate-policy.md).
 
 ## Open questions
 
@@ -140,63 +128,57 @@ canonical link target).
 
 Highest-signal first. Per-page questions are also listed on each component page.
 
-1. ~~**Missing review-handler template**~~ — **Resolved 2026-07-06**: recreated as an
-   architecture-native one-shot rewrite (detector as outer loop, trigger-comment re-review,
-   battle-tested GitHub command blocks retained); **live-verified 2026-07-07** with two clean
-   back-to-back handler runs on easyhdr#115. See
-   [40-gjc-bot-automation.md](40-gjc-bot-automation.md#discrepancies). Residual unknown: why
-   the original vanished.
-2. **Relay permanence & reliability posture** — is gjc-relay (in-path single point of failure for
+1. **Relay permanence & reliability posture** — is gjc-relay (in-path single point of failure for
    all notifications, compensated only by infinite-restart + out-of-band alarms) the intended end
    state, or is a persistent DLQ/retry layer planned? ([35-gjc-relay.md](35-gjc-relay.md#open-questions))
-3. **Interactive-vs-automated lane asymmetry** — the coordinator (hermes→gjc) lane bypasses the
-   single-flight launcher by explicit user choice; can it collide with the automated lane on the
-   same repo (worktrees differ, but clones/remotes/branches are shared)?
-   ([60-data-flow-and-integration.md](60-data-flow-and-integration.md#open-questions))
-4. **Cross-lane push races on shared PR branches** — no longer hypothetical: observed 2026-07-07
-   on easyhdr#115 (a hermes-delegated gjc session and the review handler pushing the same PR
-   branch with no shared lock). Behaviorally mitigated via `~/.hermes/SOUL.md` rebase-before-push
-   rules; a structural lock is still open.
+2. **Per-repo review concurrency (documented follow-up).** Fleet-wide review is still serial
+   single-flight (one review handler at a time across all repos). K1's per-repo `review-<repo>.lock`
+   makes concurrent per-repo review *safe* but does not yet run it in parallel; genuine per-repo
+   concurrency remains a follow-up, with the `review.backlog` alert (K7,
+   `REVIEW_BACKLOG_ALERT_MINS` default 120) as the interim backlog-age backstop.
    ([40-gjc-bot-automation.md](40-gjc-bot-automation.md#open-questions))
-5. **`gjc-reap.sh` wiring** — header claims a clawhip `tmux.stale` trigger that doesn't exist;
-   manual-only today. Re-enable the route (and tmux monitors), or update the header?
+3. **Automerge canary pending.** The automerge lane (F, `pipeline/review/automerge.sh`) is committed
+   and unit-wired but `automerge_enabled=false`; a canary rollout on a single low-risk repo is still
+   pending before it is enabled fleet-wide. ([40-gjc-bot-automation.md](40-gjc-bot-automation.md#open-questions))
+4. **Interactive-vs-automated lane asymmetry** — the coordinator (hermes→gjc) lane bypasses the
+   single-flight launcher by explicit user choice; can it collide with the automated lane on the
+   same repo (worktrees differ, but clones/remotes/branches are shared)? The concrete push-race
+   sub-case is now closed (D containment re-arm + F in-lock CI re-check + K1 per-repo lock); the
+   broader asymmetry — the coordinator lane holding no per-repo lock — remains structurally open.
+   ([60-data-flow-and-integration.md](60-data-flow-and-integration.md#open-questions))
+5. **Flaky Codex-responses websocket (live ops item).** Under `REVIEW_ENGINE=gjc`, gjc's Codex
+   backend intermittently has a flaky responses websocket that slows the gjc coordinator; watched
+   operationally, no structural fix yet. ([10-gajae-code.md](10-gajae-code.md))
 6. **Kanban's role** — the board exists and the dispatcher machinery is rich, but the live
    pipeline bypasses it. Idle capacity or future direction?
    ([20-hermes-agent.md](20-hermes-agent.md#open-questions))
-7. ~~**`restore.sh` still purges the dead script path**~~ — **Resolved 2026-07-07 (gjc-fleet
-   monorepo + user-units migration):** the stale `rm -rf ~/scripts/repo-bot` line has been removed
-   from `~/scripts/backuprestore/restore.sh`. The same pass made `restore.sh` dual-scope (user
-   units torn down first, then any `/etc/systemd/system/` leftovers from the pre-migration
-   system-level install) and consolidated `backup-now.sh`'s manifests around the new `gjc-fleet`
-   monorepo layout. ([50-configuration-and-state.md](50-configuration-and-state.md#backups--rollback))
-8. **Relay reliability under the new hardening** — `gjc-relay.service` dropped namespace-based
-   sandboxing (`ProtectSystem`/`ProtectHome`/`PrivateTmp`) on 2026-07-07 in favor of
-   namespace-free directives, to avoid an AppArmor-related start-failure risk under user-scope
-   systemd on Ubuntu ≥24.04. Verified live via a full cutover + DLQ drill, but the trade-off
-   (weaker filesystem isolation for a in-path single point of failure) is a standing judgment
-   call, not a fully closed question. ([35-gjc-relay.md](35-gjc-relay.md#open-questions))
-9. **Old system-level units: ~~soak period and~~ final removal — DONE 2026-07-08** (operator
-   skipped the soak): all 13 `/etc/systemd/system/` fleet units + the clawhip drop-in dir
-   deleted, old checkouts renamed `*.retired`, fresh backup snapshot taken. **Residual: the
-   reboot test** — linger + user-unit boot-start has only been proven across a hot cutover, not
-   a real reboot. Confirm on the next host reboot (`bootstrap/verify.sh` afterwards).
+7. **Relay reliability under the new hardening** — `gjc-relay.service` dropped namespace-based
+   sandboxing (`ProtectSystem`/`ProtectHome`/`PrivateTmp`) in favor of namespace-free directives,
+   to avoid an AppArmor-related start-failure risk under user-scope systemd on Ubuntu ≥24.04.
+   Verified live via a full cutover + DLQ drill, but the trade-off (weaker filesystem isolation for
+   an in-path single point of failure) is a standing judgment call, not a fully closed question.
+   ([35-gjc-relay.md](35-gjc-relay.md#open-questions))
+8. **Old system-level units: reboot test.** The `/etc/systemd/system/` fleet units were deleted
+   2026-07-08 (operator skipped the soak); **residual: the reboot test** — linger + user-unit
+   boot-start has only been proven across a hot cutover, not a real reboot. Confirm on the next host
+   reboot (`bootstrap/verify.sh` afterwards).
    ([70-deployment-and-operations.md](70-deployment-and-operations.md#open-questions))
-10. **Thread-permission verification (pre-rollout manual check).** The v2 work-item path relies on the
-    bot holding **`CREATE_PUBLIC_THREADS`** + **`SEND_MESSAGES_IN_THREADS`**. These are **DOC-VERIFIED**
-    against the Discord permissions docs, **not** test-verified against the live guild — so before the
-    managed surface is switched on for any channel, confirm both permissions on the bot role in that
-    guild by hand. A missing permission would fail silently at first thread creation.
-11. **Digest surface DEFERRED (design guard, not a TODO).** `Surface::Digest` was **removed from v2** —
+9. **Thread-permission verification (pre-rollout manual check).** The v2 work-item path relies on the
+   bot holding **`CREATE_PUBLIC_THREADS`** + **`SEND_MESSAGES_IN_THREADS`**. These are **DOC-VERIFIED**
+   against the Discord permissions docs, **not** test-verified against the live guild — so before the
+   managed surface is switched on for any channel, confirm both permissions on the bot role in that
+   guild by hand. A missing permission would fail silently at first thread creation.
+10. **Digest surface DEFERRED (design guard, not a TODO).** `Surface::Digest` was **removed from v2** —
     there is deliberately no batching/rollup surface today. If a future digest is added it MUST (a)
     explicitly **name the event kinds it absorbs** and (b) emit a **`[digest-drop]` counter metric** so
     "operators miss a notification" is a *checkable* condition, not a judgment call. No silent
     drop-with-an-adjective ("minor", "noisy") is acceptable as a design.
-12. **Heartbeat-bounded quiet-period stall (recorded, bounded).** After a relay restart the
+11. **Heartbeat-bounded quiet-period stall (recorded, bounded).** After a relay restart the
     token-cache/flush path can stall until the first inbound traffic primes it; that window is bounded
     to **≤120 s** by the self-priming `gjc-relay-heartbeat` timer (it manufactures a no-op inbound every
     120 s), with the queue-age alarm (`gjc-relay-health-watch`) as the backstop if the heartbeat itself
     fails. Not open so much as a documented invariant — flag if either unit is ever disabled.
-13. Smaller items tracked on component pages: `gpu_cache.json` consumer (gjc);
+12. Smaller items tracked on component pages: `gpu_cache.json` consumer (gjc);
     `verification_evidence.db` purpose (hermes); `~/.gjc-relay/.omc/` contents; slack sink usage
     (clawhip); Codex-subscription rate/usage limits for the new brain model (NanoGPT fair-use
     question is moot while on Codex); unread gjc subcommand handlers
@@ -209,60 +191,11 @@ Highest-signal first. Per-page questions are also listed on each component page.
 
 ## Changelog
 
-- 2026-07-06 — Initial draft; consolidated open questions from all pages; resolved the "robogjc"
-  ambiguity (repo deliverable, not deployed).
-- 2026-07-06 (later) — Open question #1 resolved: review-handler template restored
-  (architecture-native rewrite).
-- 2026-07-07 — Verification/consolidation pass: wave timeline extended through `yolo`/`workdir`/
-  `workspace` and `embedbatch` plus the Codex brain switch; OQ#1 residual updated (template
-  live-verified); new OQ#4 cross-lane push race (observed on easyhdr#115); catch-all item
-  broadened to cover the component-page questions it was missing; brain-model glossary entry and
-  runbook-staleness #2 updated for the Codex switch.
-- 2026-07-07 (repo-move pass) — Status → verified. Recorded the 2026-07-07 repo renames
-  (`gjc-bot` → `gjc-bot-scripts`, `server-tool` → `gjc-server-tool`), the stage-based script
-  reorg, and script self-location in a new wave-timeline entry; added `gjc-bot-scripts` and
-  `stackman/gjc-server-tool` glossary rows; reconciled the `gjc-bot` glossary entry off the dead
-  `~/scripts/repo-bot/` path. New OQ#8: `restore.sh:137` `rm -rf ~/scripts/repo-bot` no-op
-  (catch-all renumbered 8→9). Fixed runbook path drift (`~/documentation/…` → `~/downloads/…`).
-- 2026-07-07 (runbook-retirement pass) — The earlier hermes-stack build-log/runbook has been
-  deleted; this doc set is now the single source of truth. Removed it from `sources`, deleted the
-  "Runbook staleness" section (its live facts survive in the brain-model glossary row and
-  [30-clawhip.md](30-clawhip.md)), and removed OQ "Runbook's future" (remaining OQs renumbered
-  7→8's neighbours: old #8/#9 → #7/#8). Reframed the robogjc, gjc-relay, brain-model, and Phase A–G
-  glossary rows plus the wave-timeline note to past tense ("earlier build-log, now retired").
-- 2026-07-07 (fleet/ move + component rename) — Glossary: gjc-bot entry notes the historical
-  "repo-bot" working name (kept by `~/.repo-bot` + `REPO_BOT_*`); new **fleet / fleet clone root**
-  entry; new wave-timeline paragraph for the fleet/ move. Page-40 cross-links renamed.
-- 2026-07-07 (state-dir rename) — gjc-bot glossary entry and spool term updated: the on-disk
-  rename (`~/.repo-bot` → `~/.gjc-bot`, `REPO_BOT_*` → `GJC_BOT_*`) completed the gjc-bot
-  naming; wave-timeline paragraph amended accordingly.
-- 2026-07-07 (gjc-relay repo adoption) — gjc-relay glossary entry gained its source repo
-  (`engels74-bot/gjc-relay`); design-system entry notes the versioned `runtime/` copy (live copy
-  canonical). New wave-timeline paragraph for the repo adoption: crate moved out of the
-  un-versioned `~/.gjc-relay/src` into the pushed repo, rebuilt/redeployed/canary-verified, and
-  the runtime dir stripped to a pure runtime home.
-- 2026-07-07 (gjc-fleet monorepo + user-units migration) — New glossary entries: **gjc-fleet**
-  (the monorepo), **fleet.toml** (layer-2 host config), **renderer / render.sh**. Updated
-  **gjc-relay** and **gjc-bot** entries to point at their new `gjc-fleet` subdirs; **gjc-bot-scripts**
-  reframed as archived/historical (merged into `gjc-fleet/pipeline`); **stackman/gjc-server-tool**
-  entry notes it stayed a separate repo, not folded into `gjc-fleet`; **fleet / fleet clone root**
-  entry disambiguated from `fleet.toml`. New wave-timeline paragraph for the migration itself
-  (monorepo consolidation of three repos, three-layer config model, full system→user systemd
-  cutover, relay hardening change, channel-ID removal from pipeline scripts, dual-scope
-  backup/restore tooling, live verification evidence). Open questions: resolved #7 (`restore.sh`
-  dead-path line, now removed); added #8 (relay hardening trade-off under the new sandboxing) and
-  #9 (old system-unit soak/removal tracking), renumbering the catch-all to #10 and adding the
-  `EXA_API_KEY` rotation follow-up to it; resolved the hermes PR-115 cron-drift question in the
-  same pass (job removed from `jobs.json`, cited from pages 20/70 rather than re-listed here).
-- 2026-07-08 (decommission pass) — OQ#9 resolved except its reboot-test residual: `/etc` fleet
-  units deleted, checkouts retired, snapshot taken; the hermes duplicate `terminal:` block was
-  also deduped (shadowed early block deleted, effective config unchanged — see
-  [20-hermes-agent.md](20-hermes-agent.md)).
-- 2026-07-08 (notification-overhaul pass) — New glossary rows: **work-item**, **two-phase durable
-  commit**, **read-back reconciliation**, **managed / unmanaged surface** (relay v2, cross-ref page
-  35/45), **deferred-mark** and **engine vs brain lane** (cross-ref page 40). New open-question/record
-  items: #10 thread-permission pre-rollout manual check (`CREATE_PUBLIC_THREADS` +
-  `SEND_MESSAGES_IN_THREADS` are doc-verified, not test-verified); #11 Digest surface DEFERRED design
-  guard (`Surface::Digest` removed from v2; a future digest must name absorbed kinds + emit a
-  `[digest-drop]` counter); #12 heartbeat-bounded ≤120 s quiet-period stall (self-priming heartbeat +
-  queue-age backstop). Catch-all renumbered 10 → 13.
+- 2026-07-09 (v2-current-state rewrite) — Doc set rebaselined to current state; prior history in git.
+  This page: glossary gains engine-dispatch/`REVIEW_ENGINE`, automerge lane, fleet-update lane,
+  per-repo review lock (K1), policy re-arm / head containment, `review.backlog` signal, UNKNOWN CI
+  state, and the empty-list sentinel (`-`), plus the coordinator tmux reaper folded into the
+  janitor/reap row; the wave timeline was rebaselined (prior 2026-07-06→08 waves compressed) with the
+  2026-07-09 drift fold-back + automation upgrade wave; the gjc-reap.sh-wiring and cross-lane
+  push-race open questions were resolved (by I and by D+F+K), with per-repo review concurrency, the
+  automerge canary, and the flaky Codex-responses websocket added as the still-open follow-ups.

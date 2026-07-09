@@ -13,7 +13,9 @@
 #
 # Config: ~/.config/gjc-fleet/fleet.toml (override: --config or $FLEET_TOML).
 # The renderer replaces the historical dated .bak-* convention: review the diff,
-# then apply. Existing .bak-* files on disk are forensic history — never deleted.
+# then apply. Legacy dated .bak-* files are archived (tarred) into ~/.gjc-bot/archive/
+# once they are >30 days old AND `render.sh diff` is clean — git history is the primary
+# archive; the tarball is a short-lived forensic fallback, not a permanent on-disk pile.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
@@ -45,6 +47,13 @@ load_config() {
 
 cfg() { jq -r "$1 // empty" <<<"$CFG_JSON"; }
 
+# list_or_sentinel <space-joined-list> — echo "-" (single hyphen) when the list is empty,
+# else the list unchanged. An explicit `key = []` in TOML jq-joins to an EMPTY string, which
+# would trip subst's empty-{{VAR}} guard; the "-" sentinel keeps the value non-empty while
+# matching no real login in exact-token compares. Reused by future list knobs (the pattern
+# also fits CI_FIXER_AUTHORS, AUTOMERGE_AUTHORS as they land).
+list_or_sentinel() { [ -n "$1" ] && printf '%s' "$1" || printf '%s' "-"; }
+
 # Resolve a channel NAME from [discord.channels] to its numeric ID.
 ch() {
   local id
@@ -67,10 +76,16 @@ setup_vars() {
   # [review.policy] — one-review policy for automated-author PRs. Non-numeric knobs,
   # so they ride in the tracked gjc-bot.env template. AUTHORS is space-joined (the
   # detector splits on whitespace, glob-safely); jq defaults keep an absent block sane.
-  REVIEW_AUTOMATED_AUTHORS="$(jq -r '(.review.policy.automated_authors // ["renovate[bot]","dependabot[bot]"]) | join(" ")' <<<"$CFG_JSON")"
+  # An ABSENT block gets the renovate/dependabot defaults (jq's // substitutes for null).
+  # An EXPLICIT `automated_authors = []` is truthy, so // does NOT fire; it joins to "" and
+  # the sentinel maps it to "-" (never empty => subst guard satisfied; the "-" token matches
+  # no real login, so the policy lane is effectively disabled).
+  REVIEW_AUTOMATED_AUTHORS="$(list_or_sentinel "$(jq -r '(.review.policy.automated_authors // ["renovate[bot]","dependabot[bot]"]) | join(" ")' <<<"$CFG_JSON")")"
   REVIEW_POLICY_MAX_HANDLER_RUNS="$(cfg '.review.policy.max_handler_runs')"; REVIEW_POLICY_MAX_HANDLER_RUNS="${REVIEW_POLICY_MAX_HANDLER_RUNS:-2}"
+  # Force-push resilience (Workstream D): hard ceiling on policy re-arms per PR.
+  REVIEW_POLICY_MAX_REARMS="$(cfg '.review.policy.max_rearms')"; REVIEW_POLICY_MAX_REARMS="${REVIEW_POLICY_MAX_REARMS:-2}"
   REVIEW_POLICY_DECISION_MODE="$(cfg '.review.policy.decision_mode')"; REVIEW_POLICY_DECISION_MODE="${REVIEW_POLICY_DECISION_MODE:-brain}"
-  export REVIEW_AUTOMATED_AUTHORS REVIEW_POLICY_MAX_HANDLER_RUNS REVIEW_POLICY_DECISION_MODE
+  export REVIEW_AUTOMATED_AUTHORS REVIEW_POLICY_MAX_HANDLER_RUNS REVIEW_POLICY_MAX_REARMS REVIEW_POLICY_DECISION_MODE
   # [ci_fixer] — B-3 fix-until-green loop. Non-numeric-ID knobs, so they ride the tracked
   # gjc-bot.env template. DEFAULT OFF: an absent block (or enabled=false) renders
   # CI_FIXER_ENABLED=0; caps/backoff fall back to the shipped defaults. Rendered as "0"/"1"
@@ -79,7 +94,39 @@ setup_vars() {
   CI_FIXER_MAX_PER_SHA="$(cfg '.ci_fixer.max_per_sha')"; CI_FIXER_MAX_PER_SHA="${CI_FIXER_MAX_PER_SHA:-2}"
   CI_FIXER_MAX_PER_PR="$(cfg '.ci_fixer.max_per_pr')"; CI_FIXER_MAX_PER_PR="${CI_FIXER_MAX_PER_PR:-5}"
   CI_FIXER_BACKOFF_BASE_MINS="$(cfg '.ci_fixer.backoff_base_mins')"; CI_FIXER_BACKOFF_BASE_MINS="${CI_FIXER_BACKOFF_BASE_MINS:-10}"
-  export CI_FIXER_ENABLED CI_FIXER_MAX_PER_SHA CI_FIXER_MAX_PER_PR CI_FIXER_BACKOFF_BASE_MINS
+  # [ci_fixer].authors (E) — CI-fix lane author scope. Space-joined; sentinel "-" when []
+  # (same contract as REVIEW_AUTOMATED_AUTHORS). Absent block => bot + renovate + dependabot.
+  CI_FIXER_AUTHORS="$(list_or_sentinel "$(jq -r '(.ci_fixer.authors // ["engels74-bot","renovate[bot]","dependabot[bot]"]) | join(" ")' <<<"$CFG_JSON")")"
+  export CI_FIXER_ENABLED CI_FIXER_MAX_PER_SHA CI_FIXER_MAX_PER_PR CI_FIXER_BACKOFF_BASE_MINS CI_FIXER_AUTHORS
+
+  # [merge] — bot-side automerge lane (F). DEFAULT OFF (automerge_enabled=false => 0). Rendered
+  # as "0"/"1" and defaulted knobs (never empty) so subst's empty-var guard never trips.
+  AUTOMERGE_ENABLED=0; [ "$(cfg '.merge.automerge_enabled')" = "true" ] && AUTOMERGE_ENABLED=1
+  # Gated bot self-approval (a NEW mutation — DEFAULT OFF). When 1, the lane submits a formal
+  # APPROVE review on the exact head sha before merging so a required_approving_review_count=1
+  # branch-protection rule is satisfied. Rendered "0"/"1" (never empty), same shape as ENABLED.
+  AUTOMERGE_APPROVE=0; [ "$(cfg '.merge.automerge_approve')" = "true" ] && AUTOMERGE_APPROVE=1
+  AUTOMERGE_AUTHORS="$(list_or_sentinel "$(jq -r '(.merge.automerge_authors // ["renovate[bot]","dependabot[bot]"]) | join(" ")' <<<"$CFG_JSON")")"
+  AUTOMERGE_METHOD="$(cfg '.merge.automerge_method')"; AUTOMERGE_METHOD="${AUTOMERGE_METHOD:-squash}"
+  AUTOMERGE_MIN_HEAD_AGE_MINS="$(cfg '.merge.automerge_min_head_age_mins')"; AUTOMERGE_MIN_HEAD_AGE_MINS="${AUTOMERGE_MIN_HEAD_AGE_MINS:-10}"
+  AUTOMERGE_REVIEW_WAIT_MINS="$(cfg '.merge.automerge_review_wait_mins')"; AUTOMERGE_REVIEW_WAIT_MINS="${AUTOMERGE_REVIEW_WAIT_MINS:-30}"
+  AUTOMERGE_MAX_ATTEMPTS="$(cfg '.merge.automerge_max_attempts')"; AUTOMERGE_MAX_ATTEMPTS="${AUTOMERGE_MAX_ATTEMPTS:-3}"
+  AUTOMERGE_MAX_PER_POLL="$(cfg '.merge.automerge_max_per_poll')"; AUTOMERGE_MAX_PER_POLL="${AUTOMERGE_MAX_PER_POLL:-1}"
+  export AUTOMERGE_ENABLED AUTOMERGE_APPROVE AUTOMERGE_AUTHORS AUTOMERGE_METHOD AUTOMERGE_MIN_HEAD_AGE_MINS AUTOMERGE_REVIEW_WAIT_MINS AUTOMERGE_MAX_ATTEMPTS AUTOMERGE_MAX_PER_POLL
+  # review.backlog liveness signal (K7) — oldest-unhandled-PR-age alert threshold (minutes).
+  REVIEW_BACKLOG_ALERT_MINS="$(cfg '.review.policy.backlog_alert_mins')"; REVIEW_BACKLOG_ALERT_MINS="${REVIEW_BACKLOG_ALERT_MINS:-120}"
+  export REVIEW_BACKLOG_ALERT_MINS
+
+  # [janitor] — coordinator tmux reaper (I). DEFAULT OFF; grace rendered in SECONDS (mins*60).
+  JANITOR_TMUX_REAP_ENABLED=0; [ "$(cfg '.janitor.tmux_reap_enabled')" = "true" ] && JANITOR_TMUX_REAP_ENABLED=1
+  local _jgm; _jgm="$(cfg '.janitor.tmux_grace_mins')"; _jgm="${_jgm:-30}"
+  JANITOR_TMUX_GRACE_SECONDS=$(( _jgm * 60 ))
+  export JANITOR_TMUX_REAP_ENABLED JANITOR_TMUX_GRACE_SECONDS
+
+  # [updates] — nightly fleet tool-update lane (G). DEFAULT OFF.
+  TOOL_UPDATE_ENABLED=0; [ "$(cfg '.updates.tool_update_enabled')" = "true" ] && TOOL_UPDATE_ENABLED=1
+  QUIESCE_TIMEOUT_MINS="$(cfg '.updates.quiesce_timeout_mins')"; QUIESCE_TIMEOUT_MINS="${QUIESCE_TIMEOUT_MINS:-45}"
+  export TOOL_UPDATE_ENABLED QUIESCE_TIMEOUT_MINS
   CH_DEFAULT="$(ch default)"; export CH_DEFAULT
   CH_GJC_APPROVALS="$(ch gjc-approvals)"; export CH_GJC_APPROVALS
   CH_GJC_LAB="$(ch gjc-lab)"; export CH_GJC_LAB
@@ -90,14 +137,28 @@ setup_vars() {
   RELAY_MANAGED_RATE="$(cfg '.relay.managed_rate')"; RELAY_MANAGED_RATE="${RELAY_MANAGED_RATE:-medium}"
   export RELAY_MANAGED_RATE
   # RELAY_WORKITEM_CHANNELS: comma-joined numeric IDs of repos opting in via
-  # workitem_surface=true. EMPTY when every repo defaults false => feature fully OFF.
+  # workitem_surface=true, plus any extra named channels in [relay].workitem_channels
+  # (for non-repo canary surfaces such as gjc-lab). EMPTY when both selectors are
+  # empty => feature fully OFF.
   local row chname cid wic=""
+  add_workitem_cid() {
+    local candidate="$1"
+    case ",$wic," in
+      *",$candidate,"*) ;;
+      *) wic="${wic:+$wic,}$candidate" ;;
+    esac
+  }
   while IFS= read -r row; do
     [ "$(jq -r '.workitem_surface // false' <<<"$row")" = "true" ] || continue
     chname="$(jq -r '.channel' <<<"$row")"
     cid="$(ch "$chname")"
-    wic="${wic:+$wic,}$cid"
+    add_workitem_cid "$cid"
   done < <(jq -c '.repos[]' <<<"$CFG_JSON")
+  while IFS= read -r chname; do
+    [ -n "$chname" ] || continue
+    cid="$(ch "$chname")"
+    add_workitem_cid "$cid"
+  done < <(jq -r '(.relay.workitem_channels // [])[]' <<<"$CFG_JSON")
   RELAY_WORKITEM_CHANNELS="$wic"; export RELAY_WORKITEM_CHANNELS
 }
 
@@ -129,13 +190,34 @@ EOF
   fi
 }
 
+# Units are installed to the systemd USER scope only. The historical /etc/systemd/system
+# fallback was decommissioned — probing it produced misleading "live unit missing" drift.
 unit_live_path() {
   local u="$1"
-  if [ -f "$HOME/.config/systemd/user/$u" ]; then
-    printf '%s' "$HOME/.config/systemd/user/$u"
-  else
-    printf '%s' "/etc/systemd/system/$u"
-  fi
+  printf '%s' "$HOME/.config/systemd/user/$u"
+}
+
+# lane_gate_var <unit-basename> — echo the env var that gates the unit's lane, or empty
+# if the unit is always installed. Extend as more optional lanes ship (each lane's units
+# map to its CI_FIXER_ENABLED-style gate: AUTOMERGE_ENABLED, etc.).
+lane_gate_var() {
+  case "$1" in
+    ci-fixer.service|ci-fixer.timer)          printf '%s' "CI_FIXER_ENABLED" ;;
+    automerge.service|automerge.timer)        printf '%s' "AUTOMERGE_ENABLED" ;;
+    fleet-update.service|fleet-update.timer)  printf '%s' "TOOL_UPDATE_ENABLED" ;;
+    *) printf '%s' "" ;;
+  esac
+}
+
+# lane_disabled <unit-basename> — 0 (true) when the unit's lane gate is present and its
+# rendered value is "0"/empty; 1 otherwise (no gate => always enabled). Reads the gate
+# var indirectly from the current render env (set by setup_vars).
+lane_disabled() {
+  local gate val
+  gate="$(lane_gate_var "$1")"
+  [ -n "$gate" ] || return 1
+  val="${!gate:-}"
+  [ "$val" = "0" ] || [ -z "$val" ]
 }
 
 do_render() {
@@ -196,7 +278,15 @@ do_diff() {
     local base rel
     if [[ "$u" == */clawhip.service.d/* ]]; then base="clawhip.service.d/$(basename "$u")"; else base="$(basename "$u")"; fi
     rel="$(unit_live_path "$base")"
-    if [ ! -f "$rel" ]; then echo "diff: live unit missing: $rel"; drift=1; continue; fi
+    if [ ! -f "$rel" ]; then
+      # A unit whose lane is disabled is deliberately NOT installed live — that is
+      # expected state, not drift. Report it as a NOTE and move on.
+      if lane_disabled "$(basename "$base")"; then
+        echo "diff: NOTE: $(basename "$base") belongs to disabled lane ($(lane_gate_var "$(basename "$base")")=0) — not installed"
+        continue
+      fi
+      echo "diff: live unit missing: $rel"; drift=1; continue
+    fi
     if ! diff -u --label "live:$rel" --label "staged:units/$base" "$rel" "$OUT/units/$base"; then drift=1; fi
   done
   if [ "$drift" -eq 0 ]; then echo "render diff: zero drift"; else echo "render diff: DRIFT (see above)"; fi
@@ -231,6 +321,10 @@ do_apply() {
     for u in "$OUT"/units/*.service "$OUT"/units/*.timer "$OUT"/units/*.path; do
       [ -e "$u" ] || continue
       base="$(basename "$u")"
+      if lane_disabled "$base"; then
+        echo "skipped unit (disabled lane $(lane_gate_var "$base")=0): $base"
+        continue
+      fi
       dest="$HOME/.config/systemd/user/$base"
       diff -q "$dest" "$u" >/dev/null 2>&1 || install_file "$u" "$dest" "-"
     done

@@ -38,6 +38,10 @@ bind = "127.0.0.1:25295"
 #   high = 4 tokens / 5s   (throughput)
 # Or an explicit "<tokens>/<window>s", e.g. "3/5s" (tokens 1..=4, window >= 1s).
 managed_rate = "medium"
+# Optional extra channel NAMES to opt into the managed work-item path without adding
+# a repo monitor. Useful for canary/lab surfaces such as gjc-lab. Repo channels should
+# normally use per-[[repos]] workitem_surface instead.
+# workitem_channels = ["gjc-lab"]
 
 # Optional per-channel debounce pins for the v2 managed path. Channel NAME -> seconds;
 # the renderer resolves each to RELAY_DEBOUNCE_SECS__<numeric-id>. Omit entirely (the
@@ -70,10 +74,23 @@ model_fast    = "sonnet"
 # augmentcode[bot] review, then makes a bounded APPLY / DISMISS / ESCALATE decision on
 # any later review (docs/40 review-policy state machine). Human- and bot-authored PRs
 # are untouched by this lane.
+#
+# Empty-list sentinel: setting this to an explicit empty list —
+#   automated_authors = []
+# DISABLES the policy lane. It renders REVIEW_AUTOMATED_AUTHORS=- (a lone hyphen, never
+# empty so the template guard is satisfied); the detector treats "-" as the empty author
+# set and matches no login. OMITTING the key entirely keeps the renovate/dependabot
+# defaults below.
 automated_authors = ["renovate[bot]", "dependabot[bot]"]
 # Hard ceiling on handler launches per PR (first consume + APPLY relaunches). Once the
 # consumed-marker count reaches this, further APPLY decisions record only, never relaunch.
 max_handler_runs  = 2
+# Force-push resilience (Workstream D). Renovate/dependabot force-push their PR branches; a
+# policy review or ci-fix commit the fleet already acted on can be rebased away. When the PR
+# head diverges from the sha we last acted on, the detector RE-ARMS the handler (dedup per
+# head lineage). This is the hard ceiling on such re-arms per PR — once reached, the PR
+# escalates once toward a human instead of looping. Omit to keep the default below.
+max_rearms        = 2
 # Decision engine for the later-review verdict. "brain" = the no-tools NanoGPT verdict
 # path (same model as issue-triage / merge-gate). Inconclusive verdicts fail toward a human.
 decision_mode     = "brain"
@@ -96,6 +113,50 @@ max_per_pr        = 5
 # Exponential backoff base, minutes. The minimum wait since the last attempt on a PR is
 # backoff_base_mins * 2^(attempts_so_far) — with the default 10: 10 / 20 / 40 / 80 …
 backoff_base_mins = 10
+# Author scope (Workstream E). The CI-fix lane acts on PRs whose author login is in this list.
+# Default (block absent): engels74-bot + renovate[bot] + dependabot[bot]. Set to [] to disable
+# by author (renders CI_FIXER_AUTHORS=- , which matches no login). Humans addable here later.
+authors           = ["engels74-bot", "renovate[bot]", "dependabot[bot]"]
+
+[merge]
+# Bot-side automerge lane (Workstream F): pipeline/review/automerge.sh merges eligible
+# automated-author PRs via `gh pr merge --squash --match-head-commit` (server-side head pin;
+# the flag is feature-probed and the lane fails CLOSED if the installed gh lacks it). merge-gate
+# stays advisory for bot-authored PRs; automerge owns renovate/dependabot PRs.
+#
+# DEFAULT OFF. Kill switches (ALL must allow): automerge_enabled = true here, no
+# `~/.gjc-bot/automerge.disable` marker, DRY_RUN unset, the repo not opted out, and no
+# `automerge-hold` label on the PR. Leave false until the zondarr-first canary passes.
+automerge_enabled           = false
+# Gated bot self-approval (DEFAULT OFF). When true, engels74-bot submits a formal APPROVE review on
+# the exact head sha it is about to merge — the bot is NOT the PR author (renovate/dependabot is), so
+# its approval satisfies a `required_approving_review_count = 1` branch-protection rule — then merges.
+# Leave false unless the repo's branch protection requires an approving review before merge.
+automerge_approve           = false
+automerge_authors           = ["renovate[bot]", "dependabot[bot]"]
+automerge_method            = "squash"
+# Head-commit quiet period before a merge (lets renovate settle a rebase/CI first), how long to
+# wait for the one-review policy to settle, the max real attempts, and the max merges per repo
+# per 10-min poll (the rebase-cascade brake — oldest PR first).
+automerge_min_head_age_mins = 10
+automerge_review_wait_mins  = 30
+automerge_max_attempts      = 3
+automerge_max_per_poll      = 1
+
+[janitor]
+# Coordinator tmux reaper (Workstream I). The worktree janitor also reaps orphaned
+# gjc-coordinator-* tmux sessions whose coordinator-mcp state file reports state completed/stale
+# + live = false and is older than tmux_grace_mins. DEFAULT OFF; DRY_RUN logs intended reaps.
+tmux_reap_enabled  = false
+tmux_grace_mins    = 30
+
+[updates]
+# Nightly fleet tool-update lane (Workstream G): pipeline/maintenance/fleet-update.sh quiesces
+# the engines (gjc.lock + review.lock, bounded by quiesce_timeout_mins) then runs the headless
+# update-ai toolchain + `hermes update`, re-asserting the [pins] afterwards. DEFAULT OFF; other
+# kill switches: `~/.gjc-bot/fleet-update.disable` marker + DRY_RUN.
+tool_update_enabled  = false
+quiesce_timeout_mins = 45
 
 [pins]
 # Upstream engines — never vendored; installed via their own channels.

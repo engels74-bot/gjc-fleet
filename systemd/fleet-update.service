@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly fleet tool-update lane — quiesce, refresh host toolchain + hermes-agent, verify (default OFF)
+Documentation=file:{{FLEET_REPO}}/docs/40-gjc-bot-automation.md
+
+[Service]
+Type=oneshot
+Environment=PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=-%h/.gjc-bot/gjc-bot.env
+ExecStart={{FLEET_REPO}}/pipeline/maintenance/fleet-update.sh
+Nice=15

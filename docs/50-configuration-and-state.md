@@ -1,14 +1,17 @@
 <!--
 status: verified         # draft | reviewed | verified
-last_verified: 2026-07-07
+last_verified: 2026-07-09
 sources:
   - ~/.gjc, ~/.hermes, ~/.clawhip, ~/.gjc-relay, ~/.gjc-bot (runtime evidence)
   - ~/github/engels74-bot/gjc-fleet/{pipeline,render,systemd}/, ~/scripts/backuprestore/
+  - ~/github/engels74-bot/gjc-fleet/render/render.sh
   - ~/.config/gjc-fleet/fleet.toml (structure/keys only — this file is host-local and untracked)
 maintainer_notes: >
   Edit this file in isolation. Names/roles only — NEVER add secret values here, and NEVER
   reproduce numeric Discord channel/guild IDs (fleet.toml is the only place those live,
   besides the env files it renders into).
+  Changelog is a single current-state rebaseline entry — rewrite this page to current
+  state rather than appending; prior history lives in git.
   This is the consolidated inventory; per-component detail lives on the component pages.
   Full fleet.toml key reference: 45-fleet-config.md.
 -->
@@ -38,8 +41,11 @@ each with a distinct trust/tracking posture:
 
 `render/render.sh diff` **replaces the historical dated `.bak-*` convention** described below going
 forward — a would-be config edit is reviewed as a diff against the template + `fleet.toml`, then
-applied, rather than hand-edited with a timestamped backup alongside it. Existing `.bak-*` files
-already on disk are untouched; they remain forensic history of the pre-renderer waves. `render.sh
+applied, rather than hand-edited with a timestamped backup alongside it. Legacy `.bak-*` files from
+the pre-renderer waves are **archived by policy** (tarred into `~/.gjc-bot/archive/` by a hand-run
+sweep, not an automated job) once they are >30 days old **and** `render.sh diff` is clean — git
+history is the primary archive; the tarball is a
+short-lived forensic fallback, not a permanent on-disk pile. `render.sh
 doctor` separately checks hermes-owned files (`config.yaml` path lines, a duplicate `terminal:`
 block, cron workdirs) for drift **without** owning or rendering them — hermes's own config stays
 hand-maintained.
@@ -99,7 +105,7 @@ caches.
 (`.bak-phaseg-20260706-164830` → `.bak-g7-20260706-183120` → `.bak-discord-20260706-204953` →
 `.bak-embedbatch-20260707-015213`), `clawhip.env` (+ `.bak-discord-…`).
 
-### `~/.gjc-relay` (gjc-relay) — detail in [35-gjc-relay.md](35-gjc-relay.md#structure)
+### `~/.gjc-relay` (gjc-relay) — detail in [35-gjc-relay.md](35-gjc-relay.md#state-directory-the-durability-surface)
 
 Purely a **runtime home**: `gjc-relay` binary (built from the `relay/` subdir of the
 `engels74-bot/gjc-fleet` monorepo at `~/github/engels74-bot/gjc-fleet/relay` and copied here),
@@ -110,8 +116,9 @@ overhaul), `relay.env`, the supervision scripts (`dlq-watch.sh`, `alert.sh`,
 (`render/render.sh` target, 0600) rather than hand-maintained. Its keys are `RELAY_BIND`,
 `RELAY_DESIGN_SYSTEM`, `GJC_ALERT_CHANNEL` (host-local numeric ID for `#gjc-approvals`), plus the v2
 managed-path keys appended by `render.sh`: `RELAY_STATE_DIR`, `RELAY_MANAGED_RATE` (preset or
-`<t>/<w>s`), `RELAY_WORKITEM_CHANNELS` (comma-joined opt-in channel IDs; **rendered empty by default**
-⇒ managed path OFF ⇒ byte-identical v1), `GJC_LAB_CHANNEL` (host-local canary ID for the heartbeat),
+`<t>/<w>s`), `RELAY_WORKITEM_CHANNELS` (comma-joined opt-in channel IDs from per-repo
+`workitem_surface = true` plus any `[relay].workitem_channels` extra channel names; **rendered empty
+by default** ⇒ managed path OFF ⇒ byte-identical v1), `GJC_LAB_CHANNEL` (host-local canary ID for the heartbeat),
 and any optional per-channel `RELAY_DEBOUNCE_SECS__<cid>` pins. Values are host-local; the numeric
 channel IDs live only in the rendered file and `fleet.toml`, never in the tracked template. Since the 2026-07-07 gjc-fleet
 monorepo migration folded the source's brief standalone `engels74-bot/gjc-relay` repo into
@@ -141,15 +148,21 @@ state dir now matches the component name.
 | `issues.jsonl` | Dedup ledger of processed issues (terminal states `dispatched`/`skipped`) |
 | `reviews.jsonl` | Seen-set ledger for review-detector (marked on every poll) |
 | `merge-gate.jsonl` | Per-`repo#pr#sha` dedup ledger for merge-gate verdicts |
-| `review-policy.jsonl` | **New (2026-07-08)** — one-review policy ledger for automated-author PRs (renovate/dependabot). Append-only, keyed on the PR: `<repo>#<pr>#consumed` (the exactly-once "this PR was policy-handled" marker), `<repo>#<pr>#decision:<APPLY\|DISMISS\|ESCALATE>` (the bounded verdict), and `<repo>#<pr>#escalated` (handed to a human). |
-| `ci-fixer.jsonl` | **New (2026-07-08)** — fix-until-green loop ledger. Keys: `#pr:<pr>#try` and `#sha:<sha>#try` (per-PR / per-sha attempt counters bounding the loop), `#gaveup` (a cap was hit), and `#outcome:{fixed\|unchanged\|stale\|timeout}` (terminal result of an attempt). |
+| `review-policy.jsonl` | One-review policy ledger for automated-author PRs (renovate/dependabot). Append-only, keyed on the PR: `<repo>#<pr>#consumed` (exactly-once "this PR was policy-handled" marker), `<repo>#<pr>#decision:<APPLY\|DISMISS\|ESCALATE>`, `<repo>#<pr>#escalated`, plus the force-push re-arm keys `#policy-pushed:<sha>` / `#rearm:<sha>` (Workstream D, bounded by `REVIEW_POLICY_MAX_REARMS`). |
+| `ci-fixer.jsonl` | Fix-until-green loop ledger. Keys: `#pr:<pr>#try` and `#sha:<sha>#try` (per-PR / per-sha attempt counters bounding the loop), `#gaveup` (a cap was hit), and `#outcome:{fixed\|unchanged\|stale\|timeout}` (terminal result of an attempt). |
+| `automerge.jsonl` | Automerge lane ledger (Workstream F). Keys: `#pr:<pr>#try` (attempt count), `#pr:<pr>#merged:<sha>` (terminal success), `#pr:<pr>#blocked` (terminal give-up, dedup for the one `automerge.escalation` embed). |
 | `gjc.lock` | Single-flight lock for the gjc run lane (held by `_exec` fd 9 for a run's lifetime; also taken by the janitor per pass) |
-| `review.lock` | Single-flight lock shared by review-run handler **and** merge-gate (mutual exclusion) |
+| `review.lock` | Global single-flight lock taken **non-blocking** by the review-run handler **and** merge-gate (mutual exclusion) |
+| `review-<repo>.lock` | Per-repo lock (Workstream K1) nested inside `review.lock` by the review-run handler; taken alone (non-blocking) by the policy lane's deferred-mark, and taken **blocking** by ci-fixer/automerge — deadlock-free by construction since ci-fixer/automerge never blocking-acquire the global lock while holding this one |
 | `issues.lock`, `merge-gate.lock`, `reviews.lock` | Per-lane pass locks |
-| `adapter.log`, `gjc-run.log`, `review.log`, `merge-gate.log`, `janitor.log` | Per-lane logs |
+| `<lane>-poll.lock` (`review-detector-poll.lock`, `ci-fixer-poll.lock`, `merge-gate-poll.lock`, `automerge-poll.lock`) | Workstream K5 — per-loop script-level single-flight, taken non-blocking at poll entry; contention exits 0 quietly |
+| `adapter.log`, `gjc-run.log`, `review.log`, `merge-gate.log`, `ci-fixer.log`, `automerge.log`, `fleet-update.log`, `janitor.log` | Per-lane logs |
+| `logs/<lane>-<repo>-pr<NN>-<ts>.log` | Per-run engine log directory — one file per bounded coding-engine invocation (review handler / ci-fix run), pruned by the janitor's log-prune pass (entries older than 14 days deleted; the shared lane logs above are size-capped, not deleted) |
+| `state/hermes-prev-ref`, `state/hermes-deployed-ref` | Workstream G — `hermes-update.sh`'s pre-update ref record (rollback target) and last-successful-deploy ref record |
+| `archive/` | Tarballs of legacy dated `.bak-*` files, archived by a hand-run sweep once >30 days old **and** `render.sh diff` clean (a documented policy, not an automated job) — see [The three-layer config model](#the-three-layer-config-model-since-2026-07-07) for the policy |
 | `prompt-*.md` | Transient per-run prompt files (created by `gjc-run.sh launch`, removed by `_exec`) |
-| `ci-fixer.disable` | **New (2026-07-08)** — host-local kill-switch marker for the CI fixer: its presence disables the fix-until-green loop regardless of `CI_FIXER_ENABLED` (one of three off-switches, alongside `CI_FIXER_ENABLED=0` and `DRY_RUN`). |
-| `gjc-bot.env` | Rendered, 0600 env file, loaded via each unit's `EnvironmentFile=-%h/.gjc-bot/gjc-bot.env`. **2026-07-07:** channel defaults `ISSUE_NOTIFY_CHANNEL`/`MERGE_GATE_CHANNEL`/`REVIEW_NOTIFY_CHANNEL` (numeric IDs removed from the scripts). **2026-07-08 (notification overhaul):** the review-policy + CI-fixer knobs (all non-numeric-ID, so they ride the tracked template): `REVIEW_ENGINE` (`gjc`\|`claude` for the review handler run), `REVIEW_AUTOMATED_AUTHORS` (space-joined author logins routed through the one-review policy lane), `REVIEW_POLICY_MAX_HANDLER_RUNS`, `REVIEW_POLICY_DECISION_MODE`, and the CI-fixer caps `CI_FIXER_ENABLED` (primary kill switch, `0`=off default) / `CI_FIXER_MAX_PER_SHA` / `CI_FIXER_MAX_PER_PR` / `CI_FIXER_BACKOFF_BASE_MINS`. |
+| `ci-fixer.disable`, `automerge.disable`, `fleet-update.disable` | Host-local kill-switch markers, one per default-OFF lane: presence disables that lane regardless of its `[...]_ENABLED` knob (one of each lane's independent off-switches, alongside its config flag and `DRY_RUN`) |
+| `gjc-bot.env` | Rendered, 0600 env file, loaded via each unit's `EnvironmentFile=-%h/.gjc-bot/gjc-bot.env`. Carries the per-lane Discord channel defaults (`ISSUE_NOTIFY_CHANNEL`/`MERGE_GATE_CHANNEL`/`REVIEW_NOTIFY_CHANNEL`, numeric IDs never in the scripts) plus every non-numeric-ID knob from `[review]`/`[review.policy]`/`[ci_fixer]`/`[merge]`/`[janitor]`/`[updates]` in `fleet.toml` (`REVIEW_ENGINE`, `REVIEW_POLICY_*`, `CI_FIXER_*`, `AUTOMERGE_*`, `JANITOR_TMUX_*`, `TOOL_UPDATE_ENABLED`/`QUIESCE_TIMEOUT_MINS`) — config truth, zero hand-pins; see [45-fleet-config.md](45-fleet-config.md#rendered-env-vars-b-2b-3--relay-v2) for the full knob reference. |
 
 ## Databases
 
@@ -236,73 +249,13 @@ alongside the pre-existing system-scope listing.
 
 - `~/.hermes/verification_evidence.db` schema/purpose.
 - `~/.gjc-relay/.omc/` contents.
-- ~~Whether `~/scripts/backuprestore/` snapshots include the relay stack added after Phase G~~ —
-  resolved 2026-07-07: `backup-now.sh` snapshots `~/.gjc-relay` and `restore.sh` tears down all
-  three relay units + the drop-in + the relay dirs (see [Backups & rollback](#backups--rollback)).
 
 ## Changelog
 
-- 2026-07-06 — Initial draft (consolidated from all component research).
-- 2026-07-07 — Verification pass: inventory synced to the 2026-07-06/07 waves — hermes brain
-  switched to the Codex OAuth pool (`auth.json` row added; NanoGPT custody rescoped to gjc-bot);
-  hermes inline backups added (`.bak-yolo`, `.env.bak-workdir`, `SOUL.md.bak-workspace`) plus
-  `logs/` and `.gjc/`; clawhip backup count 3→4 (`embedbatch`); relay `design-system.json`/`main.rs`
-  embedbatch backups; gjc `credential-auto-import-state.json`. `~/.repo-bot` inventory re-verified
-  complete, no drift.
-- 2026-07-07 (repo-move pass) — Status → verified. Re-verified live: secrets still sourced from
-  `~/.hermes/.env` by name (scripts `grep '^GITHUB_TOKEN='`→export `GH_TOKEN`, `grep
-  '^NANOGPT_API_KEY='`); `~/.repo-bot` state dir unchanged; `relay.env` holds no token
-  (`RELAY_BIND`/`RELAY_DESIGN_SYSTEM` only); `clawhip.env` names confirmed. Fixed script-path drift
-  for the `gjc-bot-scripts` relocation: systemd sources now `~/github/engels74-bot/gjc-bot-scripts/
-  systemd/` (byte-identical to installed, reinstalled + `daemon-reload`; all four `ExecStart=` under
-  the new `<subfolder>/` layout, `Result=success`). Backup section: dropped dead
-  `~/scripts/repo-bot` from the `.bak-*` list (git-managed now, no inline backups), noted
-  `backup-now.sh:80-81` manifests and the `restore.sh:137` `rm -rf ~/scripts/repo-bot` no-op.
-- 2026-07-07 (runbook-retirement pass) — Reframed the two references to the earlier hermes-stack
-  build-log/runbook (backup-registration claims) to past tense; that build-log has been deleted and
-  this doc set is the single source of truth.
-- 2026-07-07 (fleet/ move + component rename) — Component consistently named **gjc-bot**
-  (`~/.repo-bot` and `REPO_BOT_*` flagged as historical naming). Worktree-family and
-  review-checkout paths updated to the new `~/github/engels74-bot/fleet/` clone root.
-- 2026-07-07 (state-dir rename) — `~/.repo-bot` → `~/.gjc-bot` (contents intact) and
-  `REPO_BOT_*` → `GJC_BOT_*`; inventory heading updated. `backup-now.sh:80-81` manifests now
-  capture `~/.gjc-bot` (as `gjc-bot-state.txt`), and `restore.sh:138` tears down `~/.gjc-bot`.
-- 2026-07-07 (gjc-relay repo adoption) — `~/.gjc-relay` inventory rewritten: purely a runtime home
-  now (binary + `design-system.json` + `relay.env` + scripts + `.omc/`); `src/`, `Cargo.*`,
-  `target/`, the `.bak-embedbatch-*` files, and the out-of-tree `~/.gjc-relay-build` cache are
-  gone — source lives in the `engels74-bot/gjc-relay` repo. `backup-now.sh` gained a manifest line
-  for the new repo (`gjc-relay-repo.txt`, `backup-now.sh:80-82`) and its `~/.gjc-relay` comment
-  was refreshed; resolved the open question on relay-stack backup coverage (verified against
-  `backup-now.sh`/`restore.sh` directly).
-- 2026-07-07 (gjc-fleet monorepo + user-units migration) — Added the "Three-layer config model"
-  section (`gjc-fleet` templates → host-local `~/.config/gjc-fleet/fleet.toml` → rendered
-  artifacts) and reframed `render/render.sh diff` as the replacement for the dated `.bak-*`
-  convention going forward. Secrets custody: noted `fleet.toml`'s `[secrets]` pointer table
-  (names/paths only) layered on top of the existing `~/.hermes/.env` shared-store pattern; noted
-  `EXA_API_KEY` rotation is flagged to the operator as unrelated follow-up. `~/.gjc-relay` entry:
-  the brief standalone `engels74-bot/gjc-relay` repo is gone (merged into `gjc-fleet`'s `relay/`
-  subdir); `relay.env` is now a rendered artifact. `~/.gjc-bot` table gained the new
-  `gjc-bot.env` rendered env file (channel IDs, replacing the removed in-script numeric defaults).
-  Rewrote "systemd units" (renamed from "source vs installed" to "templates vs
-  rendered/installed"): templates moved to `gjc-fleet`'s repo-root `systemd/`; every fleet unit is
-  now user-scope (`~/.config/systemd/user/`, linger, no `sudo`) except `hermes-gateway.service`,
-  which stays `hermes gateway install`-generated (a `.service.ref` copy kept for reference only);
-  old system-level units disabled-but-not-deleted pending a soak + reboot test. Rewrote "Backups &
-  rollback": `restore.sh` is now dual-scope (user units torn down first, then `/etc` leftovers) and
-  its dead `~/scripts/repo-bot` line is gone; `backup-now.sh` manifests consolidated to one
-  `gjc-fleet`-repo listing plus a new user-unit listing. Verified live against the actual
-  `render.sh`, unit files, and `backuprestore/` scripts on disk.
-- 2026-07-08 (decommission pass) — systemd section updated: `/etc` fleet units deleted, old
-  checkouts `*.retired`, fresh post-decommission snapshot. Tooling stays dual-scope defensively.
-- 2026-07-08 (notification overhaul — new state surfaces) — Documented the relay's v2 durability
-  surface `~/.gjc-relay/state/` (`state.json` cache + `.corrupt-<ts>` quarantine, `queue/` op files +
-  `.committed` markers as the delivery source of truth, `dead/` burials, `flush.alive` liveness) and
-  enumerated the rendered `relay.env` keys incl. the new `RELAY_STATE_DIR`/`RELAY_MANAGED_RATE`/
-  `RELAY_WORKITEM_CHANNELS`/`GJC_LAB_CHANNEL` (values host-local; `RELAY_WORKITEM_CHANNELS` empty by
-  default ⇒ managed path off). Added the two new `~/.gjc-bot` ledgers — `review-policy.jsonl`
-  (`<repo>#<pr>#consumed`/`#decision:<APPLY\|DISMISS\|ESCALATE>`/`#escalated`) and `ci-fixer.jsonl`
-  (`#pr:<pr>#try`/`#sha:<sha>#try`/`#gaveup`/`#outcome:{fixed\|unchanged\|stale\|timeout}`) — plus the
-  `ci-fixer.disable` kill-switch marker, and expanded the `gjc-bot.env` row with the review-policy /
-  CI-fixer knobs (`REVIEW_ENGINE`, `REVIEW_AUTOMATED_AUTHORS`, `REVIEW_POLICY_MAX_HANDLER_RUNS`,
-  `REVIEW_POLICY_DECISION_MODE`, `CI_FIXER_ENABLED`/`_MAX_PER_SHA`/`_MAX_PER_PR`/`_BACKOFF_BASE_MINS`).
-  Names/roles only — no secret values, no numeric Discord IDs.
+- 2026-07-09 (v2-current-state rewrite) — Doc set rebaselined to current state; prior history in git.
+  This page: added the new `~/.gjc-bot` state artifacts (`automerge.jsonl` ledger; `state/hermes-*`
+  prev-ref/deployed-ref records; the per-run `logs/<lane>-<repo>-pr<NN>-<ts>.log` directory;
+  `review-<repo>.lock` and the per-lane `poll.lock` files; `automerge.disable`/`fleet-update.disable`
+  markers), summarized (cross-linked to 45 rather than duplicated) the new `[merge]`/`[janitor]`/
+  `[updates]` knobs now rendered into `gjc-bot.env`, and pruned the resolved backup-coverage open
+  question.

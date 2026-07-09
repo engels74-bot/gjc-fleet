@@ -61,6 +61,28 @@ for t in issue-spool-adapter.timer review-detector.timer merge-gate.timer gjc-wo
     bad "$t: not in 'userctl list-timers'"
   fi
 done
+# automerge.timer (Workstream F) — default-OFF lane: render only installs the unit when
+# AUTOMERGE_ENABLED=1, so verify it is scheduled only when the unit is actually installed.
+if [ -f "$HOME/.config/systemd/user/automerge.timer" ]; then
+  if userctl list-timers --all --no-legend 2>/dev/null | grep -q "automerge.timer"; then
+    ok "automerge.timer: scheduled"
+  else
+    bad "automerge.timer: unit installed but not in 'userctl list-timers'"
+  fi
+else
+  echo "skip: automerge.timer (lane disabled — unit not installed)"
+fi
+# fleet-update.timer (Workstream G) — default-OFF lane: render only installs the unit when
+# TOOL_UPDATE_ENABLED=1, so verify it is scheduled only when the unit is actually installed.
+if [ -f "$HOME/.config/systemd/user/fleet-update.timer" ]; then
+  if userctl list-timers --all --no-legend 2>/dev/null | grep -q "fleet-update.timer"; then
+    ok "fleet-update.timer: scheduled"
+  else
+    bad "fleet-update.timer: unit installed but not in 'userctl list-timers'"
+  fi
+else
+  echo "skip: fleet-update.timer (lane disabled — unit not installed)"
+fi
 if userctl is-active --quiet issue-spool-adapter.path 2>/dev/null; then
   ok "issue-spool-adapter.path: active"
 else
