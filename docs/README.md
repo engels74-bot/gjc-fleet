@@ -26,6 +26,8 @@ suggests. Each page is self-contained and independently editable; every page end
 | [35-gjc-relay.md](35-gjc-relay.md) | The loopback embed proxy + supervision stack (added beyond the original layout — see its maintainer notes) |
 | [40-gjc-bot-automation.md](40-gjc-bot-automation.md) | The shell glue pipeline, script by script; scheduling map; worktree lifecycle |
 | [45-fleet-config.md](45-fleet-config.md) | `fleet.toml` key reference, the renderer command reference, secrets custody map, route invariants |
+| [46-github-house-style.md](46-github-house-style.md) | House GitHub-Flavored-Markdown style for bot-authored PR comments/commits: golden skeletons, Conventional Commits, leakage rules |
+| [47-renovate-policy.md](47-renovate-policy.md) | Canonical org-wide `renovate.json` policy: per-key rationale, all-non-fork-engels74 scope, canary-gated rollout + revert |
 | [50-configuration-and-state.md](50-configuration-and-state.md) | Consolidated config/state/secret-custody inventory (names only, no values); the three-layer config model |
 | [60-data-flow-and-integration.md](60-data-flow-and-integration.md) | **The heart**: every integration seam + the end-to-end sequence of a real job |
 | [70-deployment-and-operations.md](70-deployment-and-operations.md) | Services, scheduling, network posture, identities, logs; start/stop/rollback procedures |
