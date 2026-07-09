@@ -53,12 +53,16 @@ if is_ci_fixer_author "some-human"; then fail "default: some-human must NOT be a
 echo "(default) engels74-bot/renovate[bot]/dependabot[bot] match, some-human does not — OK"
 
 # Glob-safety: a login that looks like a shell glob metachar must never spuriously match via
-# pattern expansion during the whitespace split. And a genuine near-miss (a login that does NOT
-# normalise into the set — note bare "renovate" DOES, since normalisation strips "[bot]", so the
-# near-miss here is "notrenovate") must not match either.
+# pattern expansion during the whitespace split. A genuine near-miss ("notrenovate") must not match.
 if is_ci_fixer_author "*"; then fail "default: literal '*' must NOT spuriously match"; fi
 if is_ci_fixer_author "notrenovate"; then fail "default: near-miss 'notrenovate' must NOT match"; fi
-echo "(default) glob metachar '*' and near-miss 'notrenovate' do not match — OK"
+# SECURITY: a BARE, marker-less login must NEVER satisfy a bracketed config token — otherwise a
+# claimable human username (`github.com/renovate` is 404/registerable) could impersonate the App
+# and, with auto-approve/merge on, get attacker code merged. Only App-marked logins (app/... or
+# ...[bot]) may normalise-match; bare "renovate"/"dependabot" must be rejected.
+if is_ci_fixer_author "renovate";   then fail "SECURITY: bare 'renovate' (claimable) must NOT match renovate[bot]"; fi
+if is_ci_fixer_author "dependabot"; then fail "SECURITY: bare 'dependabot' must NOT match dependabot[bot]"; fi
+echo "(default) glob '*', near-miss, and bare claimable 'renovate'/'dependabot' all rejected — OK"
 
 # ── CI_FIXER_AUTHORS="-" sentinel -> EMPTY set, nobody matches ────────────────────────────
 export CI_FIXER_AUTHORS="-"
