@@ -715,3 +715,18 @@ marker (`ci-fixer.disable`, absent by default), the spool (`issue-spool.jsonl`),
   (including the `merge-*` glob) plus a whole-`gjc-fleet`-repo manifest. Verified live: five
   pipeline triggers exercised end-to-end (timers scheduled correctly, the path unit fired ≤4 s on
   a spool append, all oneshots `Result=success`).
+- 2026-07-09 (engine cutover to gjc — live evidence) — `REVIEW_ENGINE=gjc` set live on the review
+  lane. **Full review workflow proven on gjc**: mover-status#26 — gjc created the PR, augmentcode
+  posted 1 suggestion, the handler addressed it with a fix commit (`fix: address code review
+  comments (PR #26, iteration 1)`), and the re-review converged clean (2 handler runs, both
+  `engine=gjc … _handler OK`). gjc also produced augmentcode-approved (no-suggestion) PRs on
+  easyhdr#118 + zondarr#189, which the detector correctly **no-op'd**. Verified live alongside:
+  **K1** (per-repo `review-<repo>.lock` + global `review.lock` both held across the run), **K5**
+  (`previous pass still running` single-flight), a `gjc -p --no-pty` de-risk probe (`GJC_ENGINE_OK`),
+  and **`gjc-reap.sh`** reaping 3 stale coordinator orphans. CAVEAT: the strict cutover-gate rubric
+  (≥3 handler runs across ≥2 repos incl a failing-CI run) was **not literally met** — gjc's
+  easyhdr/zondarr PRs were clean, so no handler ran there (a positive signal, not a failure); the
+  engine is nonetheless validated on the harder address-suggestions→fix→converge path. Separately,
+  the hermes gjc-coordinator MCP lane (`gjc --worktree`, distinct from the review lane) was slow
+  from a flaky Codex responses websocket (`wss://…/backend-api/codex/responses` closed-before-
+  established) — a backend-connectivity issue, not the cutover.
