@@ -14,9 +14,12 @@ set -uo pipefail
 
 STATE_DIR="${GJC_BOT_STATE:-$HOME/.gjc-bot}"
 SCRIPTS_DIR="${GJC_BOT_SCRIPTS:-$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")/.." && pwd)}"
-GH_ROOT="${GJC_BOT_GH_ROOT:-$HOME/github/engels74-bot/fleet}"
 GH_OWNER="${GJC_BOT_GH_OWNER:-engels74}"
-REVIEW_ROOT="${REVIEW_CHECKOUT_ROOT:-$GH_ROOT/review}"
+# GH_ROOT + REVIEW_ROOT (the isolated-checkout root) are defaulted by the sourced
+# review-checkout.sh below (identical default: $GJC_BOT_GH_ROOT[/review], overridable via
+# REVIEW_CHECKOUT_ROOT) — same pattern as ci-fixer-run.sh. Not redefined here: once B removed
+# the inline ensure_checkout they became source-only config, which the prek shellcheck hook
+# (no -x) flags as SC2034 dead vars.
 REVIEW_LOCK="$STATE_DIR/review.lock"
 LOG="$STATE_DIR/review.log"
 TEMPLATE="${HANDLER_TEMPLATE:-$SCRIPTS_DIR/review/ai-code-review-handler-original.md}"
@@ -39,6 +42,11 @@ SELF="$(readlink -f "$0")"
 # gjc/claude/clawhip live outside the systemd PATH — own a complete one.
 export PATH="$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.local/bin:/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin${PATH:+:$PATH}"
 
+# B-2 policy ledger (Workstream D): the policy-lane handler records a #policy-pushed:<sha>
+# marker here when its run advanced the PR head, so review-detector.sh can later detect a
+# force-push that rebased that sha away and bounded-re-arm.
+POLICY_LEDGER="${REVIEW_POLICY_LEDGER:-$STATE_DIR/review-policy.jsonl}"
+
 # shellcheck source=pipeline/lib/engine.sh
 source "$SCRIPTS_DIR/lib/engine.sh"
 # Canonical isolated-checkout helper (single source of truth for ensure_checkout; also
@@ -47,6 +55,9 @@ source "$SCRIPTS_DIR/lib/engine.sh"
 # config vars above (GH_ROOT/REVIEW_ROOT/GH_OWNER/GIT/LOG) so its `:=` defaults never win.
 # shellcheck source=pipeline/review/review-checkout.sh
 source "$SCRIPTS_DIR/review/review-checkout.sh"
+# Shared JSONL ledger helpers for the policy-lane #policy-pushed marker (Workstream D).
+# shellcheck source=pipeline/lib/ledger.sh
+source "$SCRIPTS_DIR/lib/ledger.sh"
 
 mkdir -p "$STATE_DIR"; chmod 700 "$STATE_DIR" 2>/dev/null || true
 log() { printf '%s [review-run] %s\n' "$(date -Is)" "$*" >>"$LOG"; }
@@ -62,6 +73,13 @@ narrate() {
 }
 GH_TOKEN="$(grep '^GITHUB_TOKEN=' "$HOME/.hermes/.env" 2>/dev/null | cut -d= -f2-)"
 export GH_TOKEN
+
+# pr_head_sha <full> <pr> — the PR head sha straight from the remote (engine-neutral; mirrors
+# ci-fixer-run.sh). refs/pull/<pr>/head advances on every push OR force-push.
+pr_head_sha() {
+  local full="$1" pr="$2"
+  "$GIT" ls-remote "https://github.com/$full.git" "refs/pull/$pr/head" 2>>"$LOG" | awk '{print $1}' | head -1
+}
 
 launcher() {
   local repo="" pr="" rid="" suppress="0"
@@ -90,13 +108,13 @@ launcher() {
       -e "s|^NOTIFY_CHANNEL: .*|NOTIFY_CHANNEL: \"$NOTIFY_CHANNEL\"|" \
       -e "s|^SUPPRESS_TRIGGER: .*|SUPPRESS_TRIGGER: \"$suppress\"|" \
       "$TEMPLATE" > "$filled"
-  log "launching handler: $repo#$pr review=$rid dir=$dir prompt=$filled"
-  setsid "$SELF" _handler "$repo" "$pr" "$dir" "$filled" </dev/null >>"$LOG" 2>&1 &
+  log "launching handler: $repo#$pr review=$rid dir=$dir prompt=$filled suppress=$suppress"
+  setsid "$SELF" _handler "$repo" "$pr" "$dir" "$filled" "$suppress" </dev/null >>"$LOG" 2>&1 &
   return 0
 }
 
 _handler() {
-  local repo="$1" pr="$2" dir="$3" filled="$4"
+  local repo="$1" pr="$2" dir="$3" filled="$4" suppress="${5:-0}"
   RUN_NAME="review-pr-$pr"; RUN_SESSION="review-pr-$pr"
   exec 9>"$REVIEW_LOCK"
   if ! "$FLOCK" -n 9; then log "_handler: review.lock BUSY — aborting $repo#$pr"; rm -f "$filled"; return 1; fi
@@ -111,10 +129,21 @@ _handler() {
   exec 8>"$rlock"
   "$FLOCK" 8
   narrate started
-  log "_handler start $repo#$pr (engine=$REVIEW_ENGINE headless) cwd=$dir"
+  log "_handler start $repo#$pr (engine=$REVIEW_ENGINE headless) cwd=$dir suppress=$suppress"
+  # Workstream D: for POLICY-lane runs (suppress=1) ONLY, snapshot the PR head before the run
+  # so we can arm a #policy-pushed marker if this run advanced it (engine-neutral).
+  local full="$GH_OWNER/$repo" before_head=""
+  [ "$suppress" = "1" ] && before_head="$(pr_head_sha "$full" "$pr")"
   local rc=0
   ( cd "$dir" && engine_run "$REVIEW_ENGINE" "$filled" "$RUN_TIMEOUT" ) >>"$LOG" 2>&1
   rc=$?
+  if [ "$suppress" = "1" ]; then
+    local after_head; after_head="$(pr_head_sha "$full" "$pr")"
+    if [ -n "$after_head" ] && [ -n "$before_head" ] && [ "$after_head" != "$before_head" ]; then
+      ledger_mark "$POLICY_LEDGER" "${repo}#${pr}#policy-pushed:${after_head}"
+      log "_handler policy head advanced $repo#$pr: $before_head -> $after_head (armed #policy-pushed)"
+    fi
+  fi
   if [ "$rc" -eq 0 ]; then log "_handler OK $repo#$pr"; narrate finished
   elif [ "$rc" -eq 124 ]; then log "_handler TIMEOUT ${RUN_TIMEOUT}s $repo#$pr"; narrate failed --summary "timeout"
   else log "_handler FAILED rc=$rc $repo#$pr"; narrate failed --summary "rc=$rc"; fi

@@ -128,6 +128,10 @@ _handler() {
   rc=$?
   after="$(pr_head_sha "$full" "$pr")"
 
+  # Outcome truth = did the PR head sha change during the run? A pushed fix commit advances
+  # refs/pull/<pr>/head; an identical sha means nothing was pushed. Containment DIRECTION is
+  # irrelevant here — ANY sha change means the engine pushed something. (Force-push containment
+  # is the review-policy re-arm path's concern, via head_contains — not this outcome check.)
   local outcome status message
   if [ "$rc" -eq 124 ]; then
     outcome="timeout"; status="failed"; message="CI-fix run timed out after ${RUN_TIMEOUT}s"

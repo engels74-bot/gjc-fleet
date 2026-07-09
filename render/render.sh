@@ -80,8 +80,10 @@ setup_vars() {
   # no real login, so the policy lane is effectively disabled).
   REVIEW_AUTOMATED_AUTHORS="$(list_or_sentinel "$(jq -r '(.review.policy.automated_authors // ["renovate[bot]","dependabot[bot]"]) | join(" ")' <<<"$CFG_JSON")")"
   REVIEW_POLICY_MAX_HANDLER_RUNS="$(cfg '.review.policy.max_handler_runs')"; REVIEW_POLICY_MAX_HANDLER_RUNS="${REVIEW_POLICY_MAX_HANDLER_RUNS:-2}"
+  # Force-push resilience (Workstream D): hard ceiling on policy re-arms per PR.
+  REVIEW_POLICY_MAX_REARMS="$(cfg '.review.policy.max_rearms')"; REVIEW_POLICY_MAX_REARMS="${REVIEW_POLICY_MAX_REARMS:-2}"
   REVIEW_POLICY_DECISION_MODE="$(cfg '.review.policy.decision_mode')"; REVIEW_POLICY_DECISION_MODE="${REVIEW_POLICY_DECISION_MODE:-brain}"
-  export REVIEW_AUTOMATED_AUTHORS REVIEW_POLICY_MAX_HANDLER_RUNS REVIEW_POLICY_DECISION_MODE
+  export REVIEW_AUTOMATED_AUTHORS REVIEW_POLICY_MAX_HANDLER_RUNS REVIEW_POLICY_MAX_REARMS REVIEW_POLICY_DECISION_MODE
   # [ci_fixer] — B-3 fix-until-green loop. Non-numeric-ID knobs, so they ride the tracked
   # gjc-bot.env template. DEFAULT OFF: an absent block (or enabled=false) renders
   # CI_FIXER_ENABLED=0; caps/backoff fall back to the shipped defaults. Rendered as "0"/"1"

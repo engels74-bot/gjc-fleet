@@ -85,6 +85,12 @@ automated_authors = ["renovate[bot]", "dependabot[bot]"]
 # Hard ceiling on handler launches per PR (first consume + APPLY relaunches). Once the
 # consumed-marker count reaches this, further APPLY decisions record only, never relaunch.
 max_handler_runs  = 2
+# Force-push resilience (Workstream D). Renovate/dependabot force-push their PR branches; a
+# policy review or ci-fix commit the fleet already acted on can be rebased away. When the PR
+# head diverges from the sha we last acted on, the detector RE-ARMS the handler (dedup per
+# head lineage). This is the hard ceiling on such re-arms per PR — once reached, the PR
+# escalates once toward a human instead of looping. Omit to keep the default below.
+max_rearms        = 2
 # Decision engine for the later-review verdict. "brain" = the no-tools NanoGPT verdict
 # path (same model as issue-triage / merge-gate). Inconclusive verdicts fail toward a human.
 decision_mode     = "brain"
