@@ -1,12 +1,15 @@
 <!--
 status: verified         # draft | reviewed | verified
-last_verified: 2026-07-07
+last_verified: 2026-07-09
 sources:
   - ~/github/engels74/gjc/hermes-agent/ (pyproject.toml, hermes_cli/, gateway/, cron/, run_agent.py, hermes_state.py)
   - ~/.hermes/ (config.yaml, auth.json, SOUL.md, gateway_state.json, cron/jobs.json, cron/output/,
     channel_directory.json, scripts/{stale-branches.sh,issue-triage-fetch.sh})
+  - gjc-fleet/pipeline/maintenance/{hermes-update.sh,fleet-update.sh}, gjc-fleet/systemd/fleet-update.{service,timer}
 maintainer_notes: >
-  Edit this file in isolation. Keep headings stable; append to Changelog at the bottom.
+  Edit this file in isolation. Keep headings stable.
+  Changelog is a single current-state rebaseline entry — rewrite this page to current state
+  rather than appending; prior history lives in git.
   hermes-agent is a very large upstream project (Nous Research); this page documents the
   structure relevant to THIS deployment plus enough internal shape to navigate the repo.
 -->
@@ -207,6 +210,29 @@ carries three jobs" question on
 | `auth.json` (+ `auth.lock`) | **Credential pool for model/provider auth** — since the 2026-07-07 Codex switch this is the live auth path: `active_provider: openai-codex` (one OAuth entry, device-code sourced), plus `copilot` API-key entries sourced from `gh` CLI and `GITHUB_TOKEN` (fingerprints, not raw values). Structure: `version`, `providers`, `credential_pool`, `active_provider`, `suppressed_sources` |
 | `.skills_prompt_snapshot.json`, `memories/`, `hooks/`, `sessions/`, `platforms/`, `sandboxes/`, `pairing/`, `bin/`, caches | Assorted agent state (hooks/ currently empty) |
 
+## Updates
+
+Hermes tracks upstream **latest** (it is not ref-pinned by `bootstrap/10-engines.sh`, unlike
+gajae-code/clawhip — that script only reports drift for those two). Updating is now automated
+as the **normal operating mode**: the nightly fleet-update lane
+(`pipeline/maintenance/fleet-update.sh`, `systemd/fleet-update.{service,timer}`, ~03:30) runs
+`pipeline/maintenance/hermes-update.sh --check` then `--apply` as one of its steps, gateway
+restarted last. `hermes-update.sh` itself: `hermes update --check` gate (skip if already
+current), abort if `~/.hermes/hermes-agent` is dirty, record the pre-update ref under
+`~/.gjc-bot/state/hermes-prev-ref`, `hermes update --yes`, restart `hermes-gateway.service`,
+health-gate (`systemctl --user is-active` AND a `gateway status` probe) — on failure, roll back
+to the recorded prev-ref (`git checkout` + `pip install -e` + restart + re-check) and emit an
+escalation embed; on success, record the new ref under `~/.gjc-bot/state/hermes-deployed-ref` and
+emit a success embed. `bootstrap/10-engines.sh`'s hermes stub delegates to this script rather than
+doing its own update. See
+[70-deployment-and-operations.md](70-deployment-and-operations.md#fleet-self-update-nightly-and-manual-override) for
+the full orchestrator (quiesce, tool-update, verify) and the service/timer inventory.
+
+This lane is currently gated **OFF** (`[updates].tool_update_enabled=false`, plus a
+`~/.gjc-bot/fleet-update.disable` marker and `DRY_RUN` as additional kill switches) but is the
+intended steady state — hand-running `hermes update` is no longer how this deployment expects
+hermes to move forward; it is a documented fallback only (same commands the script wraps).
+
 ## How it connects to the rest of the system
 
 - **User → hermes:** Discord DM/@mention to GJC Brain (per-user sessions, auto-threads).
@@ -220,7 +246,7 @@ carries three jobs" question on
   see [The cron subsystem](#the-cron-subsystem).)
 - **hermes → Discord:** conversational replies as plain markdown via its own bot identity
   ("GJC Brain"). **Hermes traffic does not pass through gjc-relay** and never produces embeds —
-  by design (see [35-gjc-relay.md](35-gjc-relay.md#scope--what-does-and-does-not-flow-through-it)).
+  by design (see [35-gjc-relay.md](35-gjc-relay.md#how-it-connects-to-the-rest-of-the-system)).
 - **hermes ← others:** nothing currently pushes into hermes programmatically — the webhook platform
   is disabled and no `issue-intake` subscription exists. Shared secrets custody: gjc-bot scripts
   grep `GITHUB_TOKEN`/`NANOGPT_API_KEY` out of `~/.hermes/.env` at runtime.
@@ -234,8 +260,6 @@ carries three jobs" question on
 - The gateway `relay/` transport ("fleet events via clawhip + the relay" per a config comment) —
   is any relay-platform ingestion actually configured here? No runtime evidence found.
 - `verification_evidence.db` — schema/purpose not investigated.
-- ~~`hermes gateway run --replace` vs recorded argv~~ **Resolved 2026-07-07:** the installed unit
-  uses `python -m hermes_cli.main gateway run` with no `--replace`; the argv matches.
 - The NanoGPT fair-use question is moot while the live provider is openai-codex; it becomes
   relevant again only if the `providers.nanogpt` revert stub is activated.
 - What are the Codex-subscription rate/usage limits for `gpt-5.5` under this OAuth pool, and is
@@ -243,51 +267,7 @@ carries three jobs" question on
 
 ## Changelog
 
-- 2026-07-06 — Initial draft from source + live-runtime research (hermes-agent v0.18.0).
-- 2026-07-07 — Config/SOUL.md additions from the EasyHDR RUSTSEC-run tuning documented (approvals
-  off, max_turns 300, terminal.cwd, gjc_coordinator timeout 1800, workspace + delegation rules).
-  Operational notes from that run: guild messages require a REAL @mention (pasted "@Name" text is
-  not a mention — `DISCORD_REQUIRE_MENTION` defaults true); `gh` symlinked into `~/.local/bin` for
-  the agent's PATH; per-turn iteration cap is `agent.max_turns` (the injected "maximum number of
-  tool-calling iterations" message is this limit, not a stall).
-- 2026-07-07 (later, ~13:00) — Verification pass against live `~/.hermes` state: model/provider
-  switched to `gpt-5.5` via `openai-codex` (auth via the `auth.json` credential pool; nanogpt kept
-  as revert stub); third cron job documented (`monitor-easyhdr-pr115-rustsec`, hourly,
-  self-scheduled); upstream SecretSource/1Password architecture noted (unconfigured here);
-  `auth.json` promoted to its own runtime-table row; ExecStart claim corrected (module form, no
-  `--replace`) and that open question resolved; duplicate `terminal:` block footgun noted.
-- 2026-07-07 (later still, ~19:15) — Re-verification pass after the gjc-bot-scripts reorg and the
-  hermes cron-wrapper bugfix. Read both `~/.hermes/scripts/{stale-branches.sh,issue-triage-fetch.sh}`
-  wrappers directly: confirmed they previously `exec`'d the now-dead `~/scripts/repo-bot/*` path and
-  are now fixed to `exec` into `~/github/engels74-bot/gjc-bot-scripts/{maintenance,intake}/*.sh`;
-  updated the cron table and the "hermes → gjc-bot" connection line accordingly. Re-confirmed
-  against `~/.hermes/config.yaml`/`auth.json`/`SOUL.md`: model `gpt-5.5`/`openai-codex`,
-  `agent.max_turns: 300`, `approvals.mode: "off"` + `cron_mode: approve`, `terminal.cwd`
-  (duplicate-block behavior unchanged), `gjc_coordinator` command/timeout, and the credential-pool
-  shape (one `openai-codex` OAuth entry + two `copilot` API-key entries sourced from `gh_cli` and
-  `env:GITHUB_TOKEN`, fingerprints only) — all match verbatim. Fixed a stale `model_snapshot` value
-  in the cron table (`minimax-m3` → the actual stored `minimax/minimax-m3`). **New drift found**:
-  the `monitor-easyhdr-pr115-rustsec` job is now failing every tick with a hermes spend-drift guard
-  error (job unpinned, created under the old `custom`/`minimax-m3` snapshot, global config now
-  `openai-codex`/`gpt-5.5`) — documented under the cron table; PR #115 was still open/unmerged.
-  Delivery channel names (`#gjc-approvals`, `#gjc-events`) cross-checked by name only against
-  `~/.hermes/channel_directory.json` — no numeric IDs added to this page.
-- 2026-07-07 (fleet/ move + component rename) — repo-bot → **gjc-bot** terminology.
-  `terminal.cwd` and `GJC_COORDINATOR_MCP_WORKDIR_ROOTS` now point at
-  `~/github/engels74-bot/fleet` (config backed up as `.bak-fleetmove-*`, gateway restarted,
-  coordinator MCP env re-verified live); SOUL.md workspace conventions rewritten for the fleet/
-  layout (Layout bullet, fleet-scoped clone/scratch/pipeline-ownership paths).
-- 2026-07-07 (gjc-fleet monorepo + user-units migration) — Light-touch path sweep: the cron table
-  and the "hermes → gjc-bot" wrapper description now cite
-  `gjc-fleet/pipeline/{maintenance,intake}/*.sh` instead of the archived standalone
-  `gjc-bot-scripts` repo. `hermes-gateway.service` itself is unaffected by the units migration —
-  it remains generated by `hermes gateway install`, already user-scope; no gateway config changed.
-  Separately (same session, hermes hygiene pass): the previously-drifting
-  `monitor-easyhdr-pr115-rustsec` cron job has been **removed** from `~/.hermes/cron/jobs.json`
-  (confirmed live) — cron table now shows 2 live jobs, not 3; the Purpose section and the
-  hermes→gjc-bot connection bullet updated to match. A stale cron workdir (`fleet/mover-status`)
-  was fixed via `hermes cron edit` in the same pass.
-- 2026-07-08 (decommission pass) — Duplicate top-level `terminal:` block deduped: the shadowed
-  early block (`cwd: .` + container defaults, dead under YAML last-key-wins) deleted with a
-  dated `.bak-terminaldedupe-*` inline backup; effective config byte-for-byte unchanged
-  (gateway restarted clean, `render.sh doctor` all clear).
+- 2026-07-09 (v2-current-state rewrite) — Doc set rebaselined to current state; prior history in git.
+  This page: added the "Updates" section documenting the nightly fleet-update lane's
+  `hermes update --check`/`--apply` automation as the normal operating mode (currently gated OFF),
+  replacing implicit manual-upgrade framing.

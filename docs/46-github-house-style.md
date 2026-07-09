@@ -1,20 +1,23 @@
 <!--
 status: draft            # draft | reviewed | verified
-last_verified: 2026-07-08
+last_verified: 2026-07-09
 sources:
   - ~/github/engels74-bot/gjc-fleet/pipeline/lib/github-md.sh (gmd_h3/gmd_fence/gmd_details/gmd_footer — the composition helpers this page is normative for)
   - ~/github/engels74-bot/gjc-fleet/pipeline/lib/gh-ci.sh (ci_state/ci_red_summary — advisory-gate CI classifier + <details> companion)
   - ~/github/engels74-bot/gjc-fleet/pipeline/review/merge-gate.sh (skeleton (c) producer — advisory merge-gate comment)
+  - ~/github/engels74-bot/gjc-fleet/pipeline/review/automerge.sh (automated-author auto-merge lane — carve-out owner)
   - ~/github/engels74-bot/gjc-fleet/pipeline/run/gjc-run.sh (launcher() prompt — issue-fix PR-body producer, skeleton (a))
   - ~/github/engels74-bot/gjc-fleet/pipeline/review/ai-code-review-handler-original.md (review replies + fleet commits — skeletons (b), (d), (e))
 maintainer_notes: >
-  Edit this file in isolation. Keep headings stable; append to Changelog at the bottom.
-  This page is NORMATIVE: it is the single canonical style every fleet-authored GitHub artifact
-  (PR body, review reply, advisory comment, escalation comment, audit comment, commit) follows.
-  When you change a rule here, chase the producers listed in `sources:` above so they still conform —
-  the skeletons below are the contract those producers implement, not decoration. The leakage rule
-  (no infrastructure/session noise) is the load-bearing one: it is what keeps internal state out of
-  public GitHub history. The `augment review` trigger string is the ONE deliberate exemption.
+  Edit this file in isolation. Keep headings stable; Changelog is a single current-state
+  rebaseline entry — rewrite this page to current state rather than appending; prior history
+  lives in git. This page is NORMATIVE: it is the single canonical style every fleet-authored
+  GitHub artifact (PR body, review reply, advisory comment, escalation comment, audit comment,
+  commit) follows. When you change a rule here, chase the producers listed in `sources:` above
+  so they still conform — the skeletons below are the contract those producers implement, not
+  decoration. The leakage rule (no infrastructure/session noise) is the load-bearing one: it is
+  what keeps internal state out of public GitHub history. The `augment review` trigger string is
+  the ONE deliberate exemption.
 -->
 
 # GitHub House Style — fleet-authored artifacts
@@ -135,11 +138,14 @@ Posted by `pipeline/review/merge-gate.sh` on a CI-green **bot-authored** PR. A `
 verdict inline, an explicit "advisory only" disclaimer, failing-check detail (if any) collapsed via
 `gmd_details`, and exactly one footer. Composed through `gmd_h3` / `gmd_details` / `gmd_footer`.
 
-The "no auto-merge; a human decides" disclaimer below is scoped to bot-authored PRs: those stay
-advisory and a human merges them. **Automated-author** PRs (renovate/dependabot) are *not* gated
-here — they are owned by the auto-merge lane (`pipeline/review/automerge.sh`), which merges them
-directly once CI is green and the review policy has settled. merge-gate carves those authors out of
-its listing, so it never advises on an automerge-owned PR.
+The "no auto-merge; a human decides" disclaimer below is the default: a human merges every
+merge-gate-advised PR. The one carve-out is the automerge lane (`pipeline/review/automerge.sh`,
+configured authors `renovate[bot]` / `dependabot[bot]` via `[merge].automerge_authors`) — once a PR
+from a configured automated author is CI-green and its advisory review has settled, automerge
+merges it directly (`gh pr merge --squash --match-head-commit`) and merge-gate carves those authors
+out of its own listing, so it never advises on an automerge-owned PR. The lane is currently gated
+off (`automerge_enabled=false`); until enabled, automated-author PRs fall back to the human-merge
+default below like any other.
 
 ````markdown
 ### Advisory merge gate — CI green
@@ -269,10 +275,6 @@ This is the only exemption; everything else GitHub-bound conforms to the rules a
 
 ## Changelog
 
-- 2026-07-08 — Initial draft. Establishes the normative GitHub house style for all fleet-authored
-  artifacts: global rules (ATX headings, heading-level ownership, task-list checklists,
-  language-tagged fences, `<details>` cap, one-footer/no-footer-on-replies, zero infra noise), the
-  standard footer literal, five golden skeletons (issue-fix PR body, verdict-first review reply,
-  merge-gate advisory, CI-fix escalation, policy-dismissal audit), Conventional Commit rules for
-  fleet commits, and the single `augment review` machine-trigger exemption. Created alongside the
-  Phase B-0 `github-md.sh` / `gh-ci.sh` helpers this page is normative for.
+- 2026-07-09 (v2-current-state rewrite) — Doc set rebaselined to current state; prior history in git.
+  This page: reconciled the merge-gate advisory disclaimer with the automerge lane's automated-author
+  carve-out (`renovate[bot]` / `dependabot[bot]`, currently gated off via `automerge_enabled=false`).

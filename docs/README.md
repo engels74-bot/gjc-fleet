@@ -1,11 +1,13 @@
 <!--
 status: draft            # draft | reviewed | verified
-last_verified: 2026-07-07
+last_verified: 2026-07-09
 sources:
   - all module pages in this directory
 maintainer_notes: >
   This is the index. Keep the file list and the at-a-glance table in sync with the
-  module pages; push all substance to those pages. Append to Changelog at the bottom.
+  module pages; push all substance to those pages. Changelog is a single current-state
+  rebaseline entry — rewrite this page to current state rather than appending; prior history
+  lives in git.
 -->
 
 # Architecture — gjc / hermes / clawhip fleet
@@ -56,11 +58,11 @@ first two by `render/render.sh`. Detail: [45-fleet-config.md](45-fleet-config.md
 | hermes-agent | Discord "GJC Brain" + cron + kanban | `~/github/engels74/gjc/hermes-agent` | `~/.hermes` | `hermes-gateway.service` (user unit) |
 | clawhip | Event → Discord router + GitHub poller | `~/github/engels74/gjc/clawhip` | `~/.clawhip` | `clawhip.service` (:25294, user unit) |
 | gjc-relay | Plain text → rich embed loopback proxy | `~/github/engels74-bot/gjc-fleet/relay` | `~/.gjc-relay` | `gjc-relay.service` (:25295, user unit) |
-| gjc-bot | issue → run → review → merge-gate glue | `~/github/engels74-bot/gjc-fleet/pipeline` | `~/.gjc-bot` | user-scope systemd path/timers + hermes cron |
+| gjc-bot | issue → run → review → merge-gate glue, plus automerge + nightly fleet-update + reaper lanes | `~/github/engels74-bot/gjc-fleet/pipeline` | `~/.gjc-bot` | user-scope systemd path/timers + hermes cron |
 
 ```
-GitHub ──poll── clawhip ──spool──▶ gjc-bot ──runs──▶ gjc / claude ──PRs──▶ GitHub
-                   │                                                        │
+GitHub ──poll── clawhip ──spool──▶ gjc-bot ──engine_run (gjc)──▶ gjc ──PRs──▶ GitHub
+                   │                                                          │
                    └──REST──▶ gjc-relay ──embeds──▶ Discord ◀──chat──▶ hermes┴─MCP─▶ gjc
 ```
 
@@ -70,6 +72,8 @@ GitHub ──poll── clawhip ──spool──▶ gjc-bot ──runs──▶
 - `> [inferred]` marks statements not directly confirmed against source/runtime.
 - Secret material is referenced by **name/role only** — never values, never numeric Discord IDs.
 - Metadata block at the top of each page tracks `status` (draft/reviewed/verified) and sources.
+- Each page's `## Changelog` holds a single current-state rebaseline entry; prior history lives in
+  git (rewrite-to-current-state, not append).
 
 ## Open questions
 
@@ -78,53 +82,6 @@ GitHub ──poll── clawhip ──spool──▶ gjc-bot ──runs──▶
 
 ## Changelog
 
-- 2026-07-06 — Initial doc set created (all pages status: draft); verified against sources the
-  same day (independent review pass: APPROVE, all spot-checks passed).
-- 2026-07-07 — Post-EasyHDR-RUSTSEC-run updates to pages 20/30/35/40: hermes config tuning
-  (approvals off, max_turns, terminal.cwd, MCP timeout) + SOUL.md workspace/delegation rules;
-  clawhip issue/CI embed routes + corrected issue-spool claim; relay multi-embed batch splitting
-  + 6 new design-system kinds; review-handler template live-verified, push-race open question.
-- 2026-07-07 (later) — Full verification pass across all 10 pages against live sources, configs,
-  and systemd state (five parallel audits); `last_verified` bumped everywhere. Substantive drift
-  fixed: hermes brain switched to Codex/`gpt-5.5` with the `auth.json` credential pool (page 20 +
-  custody table on 50); third hermes cron job (EasyHDR PR-115 monitor); hermes ExecStart corrected
-  (no `--replace`); relay figures refreshed (~710 lines, 17 tests, 23 kinds); clawhip config
-  ~7.4 KB + `embedbatch` backup; review lane marked operational on 60; push-race promoted to the
-  consolidated open-questions list; wave timeline extended through `embedbatch` + the Codex switch.
-- 2026-07-07 (repo-move pass) — This documentation set now lives in its own git repo,
-  `engels74-bot/gjc-architecture` (moved from `~/documentation/architecture/`). Reflects two more
-  repo renames done this session: `engels74-bot/server-tool` → `engels74-bot/gjc-server-tool`
-  (the stackman / `server-script` ops-console TUI; only the repo/dir was renamed, the Python
-  package and console-script entrypoints are unchanged — not referenced elsewhere on this page, so
-  no other edit needed) and `engels74-bot/gjc-bot` → `engels74-bot/gjc-bot-scripts`, which was
-  also reorganized from a flat script dir into pipeline-stage subfolders (`intake/` `run/`
-  `review/` `maintenance/` `lib/` `systemd/`). Fixed the "System at a glance" table's gjc-bot
-  Source cell, which still cited the dead `~/scripts/repo-bot`; confirmed the new path and layout
-  against the live filesystem and all four systemd units' `ExecStart=`. Corrected the then-existing
-  runbook cross-reference to its on-disk path at the time (later retired — see the following entry);
-  flagged in 00-overview's Open questions since that move wasn't part of this session's known
-  changes. No secrets or numeric IDs introduced.
-- 2026-07-07 (runbook-retirement pass) — The earlier hermes-stack build-log/runbook has been
-  deleted; this doc set is now stated as the single source of truth. Rewrote the "Related, outside
-  this directory" pointer accordingly and dropped "runbook relationship / staleness" from the page
-  table. (Repo-split clarification landed in 00-overview and 70.)
-- 2026-07-07 (fleet/ move + component rename) — The shell-glue component is now consistently
-  **gjc-bot**; page 40 renamed to `40-gjc-bot-automation.md`. The six working clones, their
-  worktree buckets, and `review/` moved into `~/github/engels74-bot/fleet/`; scripts, clawhip,
-  and hermes configs re-pointed and re-verified live.
-- 2026-07-07 (state-dir rename) — `~/.repo-bot` → `~/.gjc-bot` and `REPO_BOT_*` → `GJC_BOT_*`
-  everywhere on disk; at-a-glance table updated.
-- 2026-07-07 (gjc-relay repo adoption) — gjc-relay source moved from the un-versioned
-  `~/.gjc-relay/src` into its own pushed repo `engels74-bot/gjc-relay`
-  (`~/github/engels74-bot/gjc-relay`); at-a-glance table Source cell updated. `~/.gjc-relay` is
-  now purely the runtime home. Details: [35-gjc-relay.md](35-gjc-relay.md).
-- 2026-07-07 (gjc-fleet monorepo + user-units migration) — `gjc-bot-scripts`, `gjc-relay`, and
-  `gjc-architecture` (this doc set) merged into one monorepo, `engels74-bot/gjc-fleet`
-  (`pipeline/` `relay/` `render/` `systemd/` `docs/`); the three predecessor repos are archived on
-  GitHub with pointer READMEs, history preserved via merge. Page table gained
-  [45-fleet-config.md](45-fleet-config.md) and [80-reproduction-guide.md](80-reproduction-guide.md).
-  At-a-glance table Source cells for gjc-relay/gjc-bot now point at the `gjc-fleet` subdirs; all
-  five "Runs as" cells noted as user-scope systemd units. Extended the "single source of truth"
-  statement with the new three-layer config model (`gjc-fleet` templates →
-  `~/.config/gjc-fleet/fleet.toml` → rendered artifacts via `render/render.sh`), which now also
-  covers every fleet systemd unit (moved from system-level to user-scope this same migration).
+- 2026-07-09 (v2-current-state rewrite) — Doc set rebaselined to current state; prior history in git.
+  This page: gjc-bot at-a-glance row + ascii flow updated for engine dispatch (gjc) and the new
+  automerge/fleet-update/reaper lanes; added the per-page Changelog-convention bullet.

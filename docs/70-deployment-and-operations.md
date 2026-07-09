@@ -1,12 +1,17 @@
 <!--
 status: verified         # draft | reviewed | verified
-last_verified: 2026-07-07
+last_verified: 2026-07-09
 sources:
   - ~/.config/systemd/user/ (live units, via systemctl --user cat/status)
   - ~/github/engels74-bot/gjc-fleet/{systemd,render}/ (unit templates + renderer)
   - ~/.gjc-bot/*.log, journalctl --user evidence gathered 2026-07-06/07
+  - gjc-fleet/pipeline/maintenance/{fleet-update.sh,hermes-update.sh,gjc-worktree-janitor.sh},
+    gjc-fleet/pipeline/review/automerge.sh, gjc-fleet/pipeline/lib/engine.sh,
+    gjc-fleet/fleet.toml.example
 maintainer_notes: >
-  Edit this file in isolation. Keep headings stable; append to Changelog at the bottom.
+  Edit this file in isolation. Keep headings stable.
+  Changelog is a single current-state rebaseline entry — rewrite this page to current state
+  rather than appending; prior history lives in git.
   This page maps WHAT runs WHERE and owns the operating procedures — there is no separate runbook.
 -->
 
@@ -17,8 +22,13 @@ maintainer_notes: >
 > the Service map below (all **user-scope** since 2026-07-07, no `sudo`); rollback is
 > `~/scripts/backuprestore/restore.sh --apply` (see [Backup / rollback](#backup--rollback)). Deploy
 > and re-deploy go through `render/render.sh` (see [Deploy & rollback via
-> render.sh](#deploy--rollback-via-rendersh)). The earlier hermes-stack build-log/runbook that once
-> held these procedures has been retired; this doc set supersedes it.
+> render.sh](#deploy--rollback-via-rendersh)). **The fleet self-updates nightly** (the
+> `fleet-update` lane — host toolchain + hermes-agent, currently gated OFF, see
+> [Scheduled lanes](#scheduled-lanes-systemd-timerspath--hermes-cron)); hand-running the
+> underlying `tool-update.sh`/`hermes update` commands remains a documented override for when the
+> nightly lane is off or an out-of-band update is needed (see
+> [Deploy & rollback via render.sh](#deploy--rollback-via-rendersh)). The earlier hermes-stack
+> build-log/runbook that once held these procedures has been retired; this doc set supersedes it.
 
 ## Where things run
 
@@ -92,20 +102,54 @@ installed by `render/render.sh apply --units`.
 See the full table in
 [40-gjc-bot-automation.md](40-gjc-bot-automation.md#scheduling-map). Summary: a **path unit**
 fires the issue intake on spool writes (with a 5-min backup timer); **timers** run
-review-detector (5 min), merge-gate (10 min), and the worktree janitor (2 min); **hermes cron**
-(a ticker inside the gateway, *not* systemd) runs the nightly stale-branch report and the weekly
-issue-triage digest.
+review-detector (5 min), merge-gate (10 min), automerge (10 min, default OFF), the worktree
+janitor (2 min, also carries an age-based tmux-session reaper, default OFF), and nightly
+fleet-update (~03:30, default OFF); **hermes cron** (a ticker inside the gateway, *not* systemd)
+runs the nightly stale-branch report and the weekly issue-triage digest.
 
-All four gjc-bot units are **user-scope** (`~/.config/systemd/user/`), rendered from
+All gjc-bot units are **user-scope** (`~/.config/systemd/user/`), rendered from
 `gjc-fleet/systemd/*.service` templates, with `ExecStart=` pointing at
 `~/github/engels74-bot/gjc-fleet/pipeline/<subfolder>/<script>.sh`: `issue-spool-adapter` →
 `pipeline/intake/issue-spool-adapter.sh`, `review-detector` →
 `pipeline/review/review-detector.sh`, `merge-gate` → `pipeline/review/merge-gate.sh`,
-`gjc-worktree-janitor` → `pipeline/maintenance/gjc-worktree-janitor.sh`. Each also carries
-`EnvironmentFile=-%h/.gjc-bot/gjc-bot.env` for the rendered per-lane Discord channel IDs. The
-hermes cron wrappers `~/.hermes/scripts/{stale-branches,issue-triage-fetch}.sh` are real-file
-(non-symlink) shims that `exec` `…/gjc-fleet/pipeline/maintenance/stale-branches.sh` and
-`…/pipeline/intake/issue-triage-fetch.sh`.
+`automerge` → `pipeline/review/automerge.sh`, `gjc-worktree-janitor` →
+`pipeline/maintenance/gjc-worktree-janitor.sh`, `fleet-update` →
+`pipeline/maintenance/fleet-update.sh`. Each also carries
+`EnvironmentFile=-%h/.gjc-bot/gjc-bot.env` for the rendered per-lane Discord channel IDs and
+config knobs. The hermes cron wrappers `~/.hermes/scripts/{stale-branches,issue-triage-fetch}.sh`
+are real-file (non-symlink) shims that `exec` `…/gjc-fleet/pipeline/maintenance/stale-branches.sh`
+and `…/pipeline/intake/issue-triage-fetch.sh`.
+
+**Coordinator tmux reaper (in `gjc-worktree-janitor.sh`, Workstream I).** Before its worktree
+pass, the janitor now enumerates `gjc-coordinator-*` tmux sessions and reaps one iff its
+coordinator-mcp state is `completed`/`stale` AND `live == false` AND `updated_at` is older than
+`[janitor].tmux_grace_mins` (`JANITOR_TMUX_GRACE_SECONDS`, default 30 min); a session with no
+matching state file gets a much larger ~24h fallback grace; missing/malformed state fields
+SKIP (fail-safe). Reaping goes through the existing `gjc-reap.sh`. Gated on
+`[janitor].tmux_reap_enabled` (default OFF) + `DRY_RUN`. This resolves the earlier "`gjc-reap.sh`
+is defined but never wired / who triggers it" open question — it is now wired into the janitor's
+2-minute timer.
+
+**`fleet-update` (nightly self-update lane, `pipeline/maintenance/fleet-update.sh`).**
+Orchestrates: quiesce (blocking-with-timeout `flock -w` on `gjc.lock` AND `review.lock`, plus
+waiting for zero live coordinator-mcp sessions; on timeout, DEFERS to the next night with a
+notice embed rather than forcing) → `tool-update.sh` (headless host-toolchain refresh, with a
+`trap … EXIT` that re-runs `bootstrap/10-engines.sh` to re-assert the gajae-code/clawhip pins) →
+`hermes-update.sh --apply` (gateway restarted last — see
+[20-hermes-agent.md#updates](20-hermes-agent.md#updates)) → release locks →
+`bootstrap/verify.sh` → one `fleet-update` summary embed (per-job ok/fail table). Kill switches
+(all must allow a real run): `[updates].tool_update_enabled` (default OFF), a
+`~/.gjc-bot/fleet-update.disable` marker, and `DRY_RUN`.
+
+**`automerge` (auto-merge lane, `pipeline/review/automerge.sh`).** Synchronously merges
+CI-green, policy-settled, automated-author PRs oldest-first, capped by
+`[merge].automerge_max_per_poll` (default 1) per repo per run, via
+`gh pr merge --squash --match-head-commit <sha>` inside the per-repo lock (re-fetches head +
+re-checks CI in-lock first). A capability guard feature-probes `gh pr merge --help` for
+`--match-head-commit`; if absent, it fails closed (one `automerge.escalation` embed, `gh pr
+merge` is never called). Kill switches (ALL must allow): `[merge].automerge_enabled` (default
+OFF/false — canary pending), no `~/.gjc-bot/automerge.disable` marker, `DRY_RUN` unset, the repo
+not excluded, and no `automerge-hold` label on the PR.
 
 ### Processes that exist only during work
 
@@ -184,6 +228,44 @@ own (`config.yaml` path lines, cron workdirs) for drift, without touching them. 
 [80-reproduction-guide.md](80-reproduction-guide.md); the bootstrap scripts it references handle
 first-time engine installs, secrets, and unit installation in order.
 
+### Fleet self-update (nightly) and manual override
+
+The fleet self-updates: the nightly `fleet-update` lane (`pipeline/maintenance/fleet-update.sh`,
+`systemd/fleet-update.{service,timer}`, ~03:30, currently gated OFF — see
+[Scheduled lanes](#scheduled-lanes-systemd-timerspath--hermes-cron)) quiesces the fleet, refreshes
+the host toolchain (`tool-update.sh`, which re-asserts the `gajae-code`/`clawhip` `fleet.toml`
+pins on exit via a trap), then updates hermes-agent (`hermes-update.sh --apply`, gateway restarted
+last, health-gated with rollback-on-failure), then runs `bootstrap/verify.sh` and posts one
+summary embed. This is the intended steady state; the older pattern of hand-running updates is no
+longer how this deployment expects to move forward.
+
+When the nightly lane is off (its default state) or an out-of-band update is needed, the same
+commands the lane wraps remain the documented manual override:
+
+```sh
+# host toolchain (uv/prek/bun+globals/skills/ruff/claude), then re-pin gajae-code/clawhip
+~/github/engels74-bot/gjc-fleet/pipeline/maintenance/tool-update.sh
+~/github/engels74-bot/gjc-fleet/bootstrap/10-engines.sh
+
+# hermes-agent: check, then apply with restart + health gate + rollback-on-failure
+~/github/engels74-bot/gjc-fleet/pipeline/maintenance/hermes-update.sh --check
+~/github/engels74-bot/gjc-fleet/pipeline/maintenance/hermes-update.sh --apply
+```
+
+### Review-lane engine and rollback to `claude`
+
+The review/policy/ci-fix handlers dispatch through `pipeline/lib/engine.sh` (`engine_run`), which
+runs the coding engine named in `[review].engine`. **Live default is `gjc`**
+(`gjc -p --no-pty "@<prompt-file>"`, inheriting gjc's own configured backend). The legacy headless
+`claude -p --dangerously-skip-permissions --model "$MODEL_PRIMARY"` path remains available as a
+selectable fallback engine, not the active one. To roll the review lane back to it: set
+`[review].engine = "claude"` in `~/.config/gjc-fleet/fleet.toml` and re-run
+`render/render.sh apply` (renders `REVIEW_ENGINE=claude` into `~/.gjc-bot/gjc-bot.env`), or export
+`REVIEW_ENGINE=claude` directly in that env file for an immediate override without a render pass.
+`[review].model_primary`/`model_fast` are not wired through the renderer today — the `claude`
+fallback path uses hardcoded `opus`/`sonnet` regardless, and under `engine=gjc` (the default) they
+are irrelevant anyway, since gjc inherits its own backend/models.
+
 ### Relay deploy / rollback
 
 gjc-relay is the one component deployed by a local build (its source now lives in the `relay/`
@@ -212,70 +294,16 @@ no `clawhip dlq bury:` lines ([35-gjc-relay.md](35-gjc-relay.md#build--deploy)).
 
 - `gjc-worktree-janitor.timer` uses `Persistent=false`; the other timers' persistence flags were
   not individually recorded — worth capturing if boot-catch-up behavior ever matters.
-- No monitoring exists for the hermes cron ticker beyond `hermes cron status` run manually;
-  is that acceptable now that cron carries the two low-stakes report jobs? (~~a third,
-  self-scheduled EasyHDR PR-115 monitor~~ — **resolved 2026-07-07**: it no longer appears in
-  `~/.hermes/cron/jobs.json`, confirmed live; see
-  [90-glossary-and-open-questions.md](90-glossary-and-open-questions.md#open-questions).)
+- No monitoring exists for the hermes cron ticker beyond `hermes cron status` run manually — is
+  that acceptable now that cron carries only two low-stakes report jobs?
+- Per-repo review concurrency remains a documented follow-up: review handling is fleet-wide
+  single-flight (K1/K5 locking); the `review.backlog` embed (fires past
+  `REVIEW_BACKLOG_ALERT_MINS`) mitigates but does not resolve the resulting queueing under load.
 
 ## Changelog
 
-- 2026-07-06 — Initial draft from live systemctl/journal evidence.
-- 2026-07-07 — Verification pass: service/timer tables, management level (system, not user),
-  network posture (loopback :25294/:25295 only, hermes webhook :8644 not listening), identities,
-  and log locations re-verified live — no drift. Added the Codex API to the outbound-I/O list and
-  updated the cron-ticker open question for the third (PR-115 monitor) job.
-- 2026-07-07 (repo-move pass) — Status → verified. Re-verified all four gjc-bot units live in
-  `/etc/systemd/system/`: `ExecStart=` now under `~/github/engels74-bot/gjc-bot-scripts/<subfolder>/`
-  (intake/review/maintenance), reinstalled + `daemon-reload`, all `Result=success`; timers/path unit
-  active. Documented the hermes cron real-file wrappers now `exec`-ing the new subfolder paths. Added
-  a git-identity note (`~/.gitconfig` `includeIf` for `engels74-bot` verified still enforced).
-  Long-running daemons, loopback network posture, and identities re-confirmed — no drift. Fixed
-  runbook path drift and logged it as an open question.
-- 2026-07-07 (runbook-retirement pass) — The earlier hermes-stack build-log/runbook has been
-  deleted; this page now owns start/stop/rollback procedures inline (top blockquote). Removed it
-  from `sources`, deleted the "Relationship to the runbook" section (collapsed to a one-line
-  historical note) and the two now-moot open questions about its path/future. Added a "Source vs.
-  runtime" note under "Where things run" reinforcing the repo split — upstream checkouts in
-  `~/github/engels74/gjc/` vs the built/installed runtime locations the `ExecStart=` paths point at;
-  verified live via `systemctl cat`.
-- 2026-07-07 (install-provenance refinement) — Sharpened the "Source vs. runtime" note: checkouts
-  are reference-only (not the build input); each app installs via its own channel (bun global,
-  `cargo install` from crates.io, hermes deployed-copy venv), only gjc-relay is built in place, and
-  the fleet apps are not brew formulae.
-- 2026-07-07 (fleet/ move + component rename) — Terminology only: repo-bot → **gjc-bot**;
-  cross-links updated. The `~/.gitconfig` `includeIf "gitdir:/home/cvps/github/engels74-bot/"`
-  prefix still covers the new `fleet/` subfolder, so the bot identity is unaffected (verified).
-- 2026-07-07 (state-dir rename) — Log-location table updated for the `~/.repo-bot` →
-  `~/.gjc-bot` rename; `issue-spool-adapter.path` reinstalled + `daemon-reload` (watches the
-  new spool path, verified fired-on-append).
-- 2026-07-07 (gjc-relay repo adoption) — "Source vs. runtime" note updated: the relay is no longer
-  "built in place" — it builds from its own repo `~/github/engels74-bot/gjc-relay` and the binary
-  is copied to `~/.gjc-relay/`. Added the "Relay deploy / rollback" procedure (build → test →
-  copy → restart → canary-verify). Executed live this session: 17 tests passed, repo-built binary
-  byte-identical to the deployed one, ~1 s restart window, `#gjc-lab` canary `-> 200`, no DLQ
-  burials, all relay-stack units active.
-- 2026-07-07 (gjc-fleet monorepo + user-units migration) — Every fleet unit (clawhip, the full
-  relay-stack, all four gjc-bot units) moved from system-level to **user-scope** systemd
-  (`~/.config/systemd/user/`, linger enabled, no `sudo`); `hermes-gateway.service` stays generated
-  by `hermes gateway install` (already user-scope-native). Added the "Migration to user units"
-  subsection (linger + `XDG_RUNTIME_DIR` prerequisites, `pipeline/lib/userctl.sh` wrappers,
-  old `/etc` units disabled-but-not-deleted pending a soak + reboot test). Service map: all
-  `ExecStart=`/ownership updated for user-scope + the `gjc-fleet` monorepo paths (relay built from
-  `relay/`, pipeline scripts from `pipeline/<stage>/`). Added a new top-level "Deploy & rollback via
-  render.sh" section (render/diff/apply/check/doctor) superseding ad hoc hand-edits; every
-  operational command in this page changed `systemctl`/`journalctl` to their `--user` forms.
-  Backup/rollback: `restore.sh` confirmed dual-scope. Verified live: a 2-second relay+clawhip
-  cutover behind a `healthz` gate, a canary embed transformed end-to-end (200 in `#gjc-lab`), and a
-  full DLQ drill (relay stopped → doomed canary → `clawhip dlq bury:` observed in the user journal →
-  `gjc-dlq-watch` alerted `#gjc-approvals` in ~6 s → relay restored → post-drill canary 200); a
-  separate wave regenerated `hermes-gateway.service` as a user unit in ~4 s with
-  `RestartForceExitStatus=75`/`KillMode=mixed`/`ExecStopPost` all preserved. Separately, hermes
-  hygiene done in the same session removed the self-scheduled `monitor-easyhdr-pr115-rustsec` cron
-  job from `jobs.json` (resolving the cron-ticker open question's "three jobs" framing) and fixed a
-  stale cron workdir via `hermes cron edit`.
-- 2026-07-08 (decommission pass) — The 13 disabled pre-migration `/etc/systemd/system` fleet
-  units + the clawhip drop-in dir were deleted (operator skipped the planned soak);
-  `daemon-reload`ed, verified zero fleet leftovers and zero stale-path refs in `/etc`. The
-  reboot test remains the one outstanding user-unit proof. Old checkouts renamed `*.retired`;
-  fresh backup snapshot taken (`20260708-000750`).
+- 2026-07-09 (v2-current-state rewrite) — Doc set rebaselined to current state; prior history in git.
+  This page: `fleet-update` + `automerge` units and the janitor's coordinator tmux reaper added to
+  the service/scheduling inventory; nightly self-update (tool-update + hermes-update, with pin
+  re-assertion) documented as normal ops with the manual commands kept as an override; review-lane
+  engine noted as `gjc` live with the documented rollback to `claude`.

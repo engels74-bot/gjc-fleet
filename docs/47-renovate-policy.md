@@ -51,7 +51,7 @@ IN, never overwritten over a repo's own rules.
 ## Scope
 
 All **non-fork, non-archived** engels74 repos (forks are excluded — a renovate config in a fork is
-inert for us and only pollutes upstream PRs). This includes the six fleet app repos; their bot
+inert for us and only pollutes upstream PRs) — **33 repos at the 2026-07-09 rollout**. This includes the six fleet app repos; their bot
 working clones under `~/github/engels74-bot/fleet/` pick the change up on their next fetch, so no
 separate PR lane is needed.
 
