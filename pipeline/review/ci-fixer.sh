@@ -14,9 +14,11 @@
 # Disabled or marker present => exit 0 quietly (zero fixer records).
 #
 # ── Scope ─────────────────────────────────────────────────────────────────────────────────
-# BOT-AUTHORED PRs ONLY (author login == the bot login). Automated-author (renovate/
-# dependabot) and human PRs are NEVER touched — upstream bots force-push over fleet commits,
-# so a fix commit there would be clobbered and the loop would churn.
+# Open PRs whose author login is a member of CI_FIXER_AUTHORS (default: the bot + renovate[bot]
+# + dependabot[bot]; humans addable via config). The old BOT-AUTHORED-ONLY restriction existed
+# because upstream bots force-push over fleet commits, clobbering a fix commit and churning the
+# loop — that risk is now mitigated by Workstream C (rebaseWhen:conflicted) + D (containment/
+# re-arm), so automated-author PRs are back in scope by default.
 #
 # ── PR state machine (per open bot PR, on HEAD sha) ───────────────────────────────────────
 #   ci_state == GREEN|PENDING|NONE  -> skip (zero fixer records).
@@ -57,6 +59,9 @@ CI_FIXER_ENABLED="${CI_FIXER_ENABLED:-0}"
 MAX_PER_SHA="${CI_FIXER_MAX_PER_SHA:-2}"
 MAX_PER_PR="${CI_FIXER_MAX_PER_PR:-5}"
 BACKOFF_BASE_MINS="${CI_FIXER_BACKOFF_BASE_MINS:-10}"
+# Author scoping (rendered from [ci_fixer].authors). Space-joined login list; a lone "-" is
+# the A1 sentinel for the EMPTY set (rendered from `authors = []`) so the fixer touches no one.
+CI_FIXER_AUTHORS="${CI_FIXER_AUTHORS:-$BOT renovate[bot] dependabot[bot]}"
 DRY_RUN="${DRY_RUN:-0}"
 
 # Discord routing — reuse the already-rendered numeric IDs (numeric IDs never live in the
@@ -91,6 +96,21 @@ export GH_TOKEN
 # merge-gate.sh / review-detector.sh; `review` and gjc worktrees are never targets.
 list_bot_repos() { ( shopt -s nullglob; for d in "$GH_ROOT"/*/; do d="${d%/}"; b="${d##*/}"; case "$b" in review|*.gajae-code-worktrees) continue ;; esac; [ -d "$d/.git" ] && printf '%s ' "$b"; done ); }
 REPOS="${CI_FIXER_REPOS:-$(list_bot_repos)}"
+
+# is_ci_fixer_author <login> -> 0 if <login> is in CI_FIXER_AUTHORS. Glob-safe: globbing is
+# disabled while splitting so bracketed logins like "renovate[bot]" match literally (space- OR
+# comma-joined lists both accepted). Mirrors review-detector.sh's is_automated_author().
+is_ci_fixer_author() {
+  local a="$1" x rc=1 list
+  # Sentinel: a lone "-" means the empty author set (rendered from `authors = []`).
+  # Return non-match unconditionally so the fixer touches no one.
+  [ "$CI_FIXER_AUTHORS" = "-" ] && return 1
+  list="$(printf '%s' "$CI_FIXER_AUTHORS" | tr ',' ' ')"
+  set -f
+  for x in $list; do [ "$x" = "$a" ] && { rc=0; break; }; done
+  set +f
+  return "$rc"
+}
 
 # ── kill-switch gate ──────────────────────────────────────────────────────────────────────
 # Returns 0 (proceed) only when enabled AND no disable marker; otherwise logs + fails.
@@ -231,15 +251,16 @@ main() {
   # main() so the CI_FIXER_NO_MAIN=1 sourced test path is unaffected.
   exec 200>"$STATE_DIR/ci-fixer-poll.lock"; "$FLOCK" -n 200 || { log "previous pass still running"; exit 0; }
   gate_open || exit 0
-  local repo full pr sha
+  local repo full pr login sha
   for repo in $REPOS; do
     full="$GH_OWNER/$repo"
-    for pr in $("$GH" pr list -R "$full" --state open --author "$BOT" --json number --jq '.[].number' 2>/dev/null); do
+    while IFS=$'\t' read -r pr login; do
       [ -n "$pr" ] || continue
+      is_ci_fixer_author "$login" || continue
       sha="$("$GH" pr view "$pr" -R "$full" --json headRefOid --jq '.headRefOid' 2>/dev/null)"
       [ -n "$sha" ] || { log "skip $full#$pr: no HEAD sha"; continue; }
       consider_pr "$repo" "$full" "$pr" "$sha"
-    done
+    done < <("$GH" pr list -R "$full" --state open --json number,author --jq '.[] | [.number, .author.login] | @tsv' 2>/dev/null)
   done
   exit 0
 }
