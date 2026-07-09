@@ -93,7 +93,9 @@ reassert_pins() {
     log "pins: re-assert FAILED"; record "pins" fail
   fi
 }
-trap reassert_pins EXIT
+# EXIT covers normal/error exits; INT/TERM/HUP cover a signalled abort (fleet-update kill or
+# systemd shutdown) mid-`bun update -g --latest`, so gajae-code is NEVER left unpinned.
+trap reassert_pins EXIT INT TERM HUP
 
 log "run log: $RUN_LOG"
 

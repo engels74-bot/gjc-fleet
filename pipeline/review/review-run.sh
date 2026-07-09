@@ -95,7 +95,9 @@ launcher() {
   [ -n "$repo" ] && [ -n "$pr" ] || { log "launch: --repo and --pr required"; return 2; }
   # non-blocking single-flight pre-check (authoritative guarantee is _handler's flock)
   "$FLOCK" -n "$REVIEW_LOCK" true || { log "launch SKIPPED (busy): review.lock held; $repo#$pr"; return 75; }
-  local dir; dir="$(ensure_checkout "$repo")" || return 1
+  # ensure_checkout is deliberately NOT called here: it mutates the shared fleet/review/<repo>
+  # tree (git fetch + checkout -f) and MUST run under the per-repo lock (K1). _handler runs it
+  # AFTER acquiring review-<repo>.lock, so a concurrent handler can never corrupt the checkout.
   # fill the handler Config block (logic untouched)
   local filled
   filled="$STATE_DIR/review-prompt-${repo}-${pr}-$(date +%Y%m%d-%H%M%S)-$$.md"
@@ -108,13 +110,13 @@ launcher() {
       -e "s|^NOTIFY_CHANNEL: .*|NOTIFY_CHANNEL: \"$NOTIFY_CHANNEL\"|" \
       -e "s|^SUPPRESS_TRIGGER: .*|SUPPRESS_TRIGGER: \"$suppress\"|" \
       "$TEMPLATE" > "$filled"
-  log "launching handler: $repo#$pr review=$rid dir=$dir prompt=$filled suppress=$suppress"
-  setsid "$SELF" _handler "$repo" "$pr" "$dir" "$filled" "$suppress" </dev/null >>"$LOG" 2>&1 &
+  log "launching handler: $repo#$pr review=$rid prompt=$filled suppress=$suppress"
+  setsid "$SELF" _handler "$repo" "$pr" "$filled" "$suppress" </dev/null >>"$LOG" 2>&1 &
   return 0
 }
 
 _handler() {
-  local repo="$1" pr="$2" dir="$3" filled="$4" suppress="${5:-0}"
+  local repo="$1" pr="$2" filled="$3" suppress="${4:-0}"
   RUN_NAME="review-pr-$pr"; RUN_SESSION="review-pr-$pr"
   exec 9>"$REVIEW_LOCK"
   if ! "$FLOCK" -n 9; then log "_handler: review.lock BUSY — aborting $repo#$pr"; rm -f "$filled"; return 1; fi
@@ -124,10 +126,13 @@ _handler() {
   # same checkout under the SAME per-repo lock. Lock order is GLOBAL (fd 9) -> PER-REPO
   # (fd 8); it is deadlock-free BY CONSTRUCTION because ci-fixer-run NEVER acquires the
   # global review.lock, so the two lanes can never form a wait cycle. fd 8 stays open until
-  # _handler returns, so the per-repo lock is held across the whole engine_run mutation window.
+  # _handler returns, so the per-repo lock covers BOTH the checkout below AND the engine_run window.
   local rlock="$STATE_DIR/review-${repo}.lock"
   exec 8>"$rlock"
   "$FLOCK" 8
+  # K1: the shared-tree mutation (ensure_checkout = git fetch + checkout -f) runs HERE, under the
+  # per-repo lock — outside it a concurrent handler's checkout would corrupt this tree.
+  local dir; dir="$(ensure_checkout "$repo")" || { log "_handler: checkout failed $repo#$pr"; rm -f "$filled"; return 1; }
   narrate started
   log "_handler start $repo#$pr (engine=$REVIEW_ENGINE headless) cwd=$dir suppress=$suppress"
   # Workstream D: for POLICY-lane runs (suppress=1) ONLY, snapshot the PR head before the run

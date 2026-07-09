@@ -80,7 +80,8 @@ launcher() {
   esac; done
   [ -n "$repo" ] && [ -n "$pr" ] && [ -n "$sha" ] || { log "launch: --repo, --number and --sha required"; return 2; }
   local full="$GH_OWNER/$repo"
-  local dir; dir="$(ensure_checkout "$repo")" || return 1
+  # ensure_checkout is NOT called here: it mutates the shared fleet/review/<repo> tree (git fetch
+  # + checkout -f) and MUST run under the per-repo lock (K1). _handler runs it after locking.
   # attempt number (this per-pr try was already recorded by the poller before launch).
   local attempt; attempt="$(ledger_count "$LEDGER" "${full}#pr:${pr}#try")"
   # fill the handler Config block (sed on `^KEY: ` lines, mirroring review-run.sh).
@@ -94,13 +95,13 @@ launcher() {
       -e "s|^MODEL_PRIMARY: .*|MODEL_PRIMARY: \"$MODEL_PRIMARY\"|" \
       -e "s|^MODEL_FAST: .*|MODEL_FAST: \"$MODEL_FAST\"|" \
       "$TEMPLATE" > "$filled"
-  log "launching ci-fix handler: $full#$pr sha=$sha attempt=$attempt dir=$dir prompt=$filled stage=$stage"
-  setsid "$SELF" _handler "$repo" "$pr" "$sha" "$dir" "$filled" </dev/null >>"$LOG" 2>&1 &
+  log "launching ci-fix handler: $full#$pr sha=$sha attempt=$attempt prompt=$filled stage=$stage"
+  setsid "$SELF" _handler "$repo" "$pr" "$sha" "$filled" </dev/null >>"$LOG" 2>&1 &
   return 0
 }
 
 _handler() {
-  local repo="$1" pr="$2" sha="$3" dir="$4" filled="$5"
+  local repo="$1" pr="$2" sha="$3" filled="$4"
   local full="$GH_OWNER/$repo"
   RUN_NAME="ci-fix-pr-$pr"; RUN_SESSION="ci-fix-pr-$pr"
   # B-3 lock: PER-REPO, BLOCKING (no -n). Queue behind any concurrent ci-fix run for the
@@ -108,6 +109,16 @@ _handler() {
   local lock="$STATE_DIR/review-${repo}.lock"
   exec 9>"$lock"
   "$FLOCK" 9
+  # K1: the shared-tree mutation (ensure_checkout = git fetch + checkout -f) runs HERE, under the
+  # per-repo lock — outside it a concurrent review/ci-fix handler's checkout would corrupt this tree.
+  local dir; dir="$(ensure_checkout "$repo")" || {
+    log "_handler checkout FAILED $full#$pr"
+    ledger_mark "$LEDGER" "${full}#pr:${pr}#outcome:unchanged"
+    emit_embed --kind ci-fix --repo "$full" --status unchanged --number "$pr" --stage ci-fix \
+      --url "https://github.com/$full/pull/$pr" \
+      --message "$(printf '%b' "${full}#${pr} — CI-fix could not start: checkout failed")"
+    rm -f "$filled"; return 1
+  }
   "$CLAWHIP" agent started --name "$RUN_NAME" --session "$RUN_SESSION" >/dev/null 2>&1 || true
   log "_handler start $full#$pr (engine=$REVIEW_ENGINE headless) cwd=$dir sha=$sha"
 

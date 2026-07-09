@@ -70,12 +70,14 @@ gate() {
   return 0
 }
 
-# count_live_coord — number of coordinator-mcp session-state files with .live == true.
+# count_live_coord — number of coordinator-mcp session-state files that are (or might be) live.
+# FAIL-SAFE toward DEFERRING: a missing/renamed/unparseable `live` field counts as LIVE (true),
+# so a future hermes schema change makes quiesce wait/defer rather than proceed over an active run.
 count_live_coord() {
   local n=0 f live
   shopt -s nullglob
   for f in "$COORD_STATE_ROOT"/*/*/session-states/*.json; do
-    live="$("$JQ" -r 'if has("live") and (.live != null) then (.live|tostring) else "false" end' "$f" 2>/dev/null || echo false)"
+    live="$("$JQ" -r 'if has("live") and (.live != null) then (.live|tostring) else "true" end' "$f" 2>/dev/null || echo true)"
     [ "$live" = "true" ] && n=$(( n + 1 ))
   done
   printf '%s' "$n"

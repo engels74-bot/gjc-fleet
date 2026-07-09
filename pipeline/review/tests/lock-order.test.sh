@@ -55,6 +55,28 @@ ln_repo="$(grep -nF 'exec 8>"$rlock"' "$REVIEW_RUN" | head -1 | cut -d: -f1)"
   || fail "STATIC(b): global lock (line $ln_global) must be acquired BEFORE per-repo (line $ln_repo)"
 echo "STATIC(b) OK: global fd9 acquire (line $ln_global) precedes per-repo fd8 acquire (line $ln_repo)."
 
+# ── STATIC (d) — the shared-tree mutation (ensure_checkout) runs UNDER the per-repo lock ─────
+# The corruption primitive is ensure_checkout's `git fetch` / `git checkout -f` on the shared
+# fleet/review/<repo> tree. K1 only closes the race if that runs INSIDE the per-repo lock, not in
+# the launcher — otherwise a review launcher (gated only on the global lock) could checkout the
+# tree while a ci-fixer handler holds only the per-repo lock and is mid-commit. Assert both
+# lanes call ensure_checkout EXACTLY ONCE, AFTER their per-repo lock acquire.
+ln_rr_checkout="$(grep -nF 'ensure_checkout "$repo"' "$REVIEW_RUN" | head -1 | cut -d: -f1)"
+[ -n "$ln_rr_checkout" ] || fail 'STATIC(d): review-run.sh should call ensure_checkout "$repo"'
+[ "$ln_rr_checkout" -gt "$ln_repo" ] \
+  || fail "STATIC(d): review-run.sh ensure_checkout (line $ln_rr_checkout) must run AFTER the per-repo lock (line $ln_repo)"
+[ "$(grep -cF 'ensure_checkout "$repo"' "$REVIEW_RUN")" -eq 1 ] \
+  || fail "STATIC(d): review-run.sh must call ensure_checkout exactly once (in _handler, under the lock — not the launcher)"
+
+ln_cf_lock="$(grep -nF '"$FLOCK" 9' "$CIFIXER_RUN" | head -1 | cut -d: -f1)"
+ln_cf_checkout="$(grep -nF 'ensure_checkout "$repo"' "$CIFIXER_RUN" | head -1 | cut -d: -f1)"
+[ -n "$ln_cf_lock" ] && [ -n "$ln_cf_checkout" ] || fail "STATIC(d): could not locate ci-fixer-run per-repo lock + checkout"
+[ "$ln_cf_checkout" -gt "$ln_cf_lock" ] \
+  || fail "STATIC(d): ci-fixer-run.sh ensure_checkout (line $ln_cf_checkout) must run AFTER the per-repo lock (line $ln_cf_lock)"
+[ "$(grep -cF 'ensure_checkout "$repo"' "$CIFIXER_RUN")" -eq 1 ] \
+  || fail "STATIC(d): ci-fixer-run.sh must call ensure_checkout exactly once (in _handler, under the lock — not the launcher)"
+echo "STATIC(d) OK: ensure_checkout runs under the per-repo lock in both lanes (checkout inside the mutation window)."
+
 # ── SIMULATED (c) — real flock proves per-repo mutual exclusion + cross-repo independence ──
 RLOCK_A="$TMP/review-repoA.lock"
 RLOCK_B="$TMP/review-repoB.lock"
