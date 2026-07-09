@@ -74,6 +74,13 @@ model_fast    = "sonnet"
 # augmentcode[bot] review, then makes a bounded APPLY / DISMISS / ESCALATE decision on
 # any later review (docs/40 review-policy state machine). Human- and bot-authored PRs
 # are untouched by this lane.
+#
+# Empty-list sentinel: setting this to an explicit empty list —
+#   automated_authors = []
+# DISABLES the policy lane. It renders REVIEW_AUTOMATED_AUTHORS=- (a lone hyphen, never
+# empty so the template guard is satisfied); the detector treats "-" as the empty author
+# set and matches no login. OMITTING the key entirely keeps the renovate/dependabot
+# defaults below.
 automated_authors = ["renovate[bot]", "dependabot[bot]"]
 # Hard ceiling on handler launches per PR (first consume + APPLY relaunches). Once the
 # consumed-marker count reaches this, further APPLY decisions record only, never relaunch.

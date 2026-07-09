@@ -45,6 +45,13 @@ load_config() {
 
 cfg() { jq -r "$1 // empty" <<<"$CFG_JSON"; }
 
+# list_or_sentinel <space-joined-list> — echo "-" (single hyphen) when the list is empty,
+# else the list unchanged. An explicit `key = []` in TOML jq-joins to an EMPTY string, which
+# would trip subst's empty-{{VAR}} guard; the "-" sentinel keeps the value non-empty while
+# matching no real login in exact-token compares. Reused by future list knobs (the pattern
+# also fits CI_FIXER_AUTHORS, AUTOMERGE_AUTHORS as they land).
+list_or_sentinel() { [ -n "$1" ] && printf '%s' "$1" || printf '%s' "-"; }
+
 # Resolve a channel NAME from [discord.channels] to its numeric ID.
 ch() {
   local id
@@ -67,7 +74,11 @@ setup_vars() {
   # [review.policy] — one-review policy for automated-author PRs. Non-numeric knobs,
   # so they ride in the tracked gjc-bot.env template. AUTHORS is space-joined (the
   # detector splits on whitespace, glob-safely); jq defaults keep an absent block sane.
-  REVIEW_AUTOMATED_AUTHORS="$(jq -r '(.review.policy.automated_authors // ["renovate[bot]","dependabot[bot]"]) | join(" ")' <<<"$CFG_JSON")"
+  # An ABSENT block gets the renovate/dependabot defaults (jq's // substitutes for null).
+  # An EXPLICIT `automated_authors = []` is truthy, so // does NOT fire; it joins to "" and
+  # the sentinel maps it to "-" (never empty => subst guard satisfied; the "-" token matches
+  # no real login, so the policy lane is effectively disabled).
+  REVIEW_AUTOMATED_AUTHORS="$(list_or_sentinel "$(jq -r '(.review.policy.automated_authors // ["renovate[bot]","dependabot[bot]"]) | join(" ")' <<<"$CFG_JSON")")"
   REVIEW_POLICY_MAX_HANDLER_RUNS="$(cfg '.review.policy.max_handler_runs')"; REVIEW_POLICY_MAX_HANDLER_RUNS="${REVIEW_POLICY_MAX_HANDLER_RUNS:-2}"
   REVIEW_POLICY_DECISION_MODE="$(cfg '.review.policy.decision_mode')"; REVIEW_POLICY_DECISION_MODE="${REVIEW_POLICY_DECISION_MODE:-brain}"
   export REVIEW_AUTOMATED_AUTHORS REVIEW_POLICY_MAX_HANDLER_RUNS REVIEW_POLICY_DECISION_MODE
@@ -143,13 +154,32 @@ EOF
   fi
 }
 
+# Units are installed to the systemd USER scope only. The historical /etc/systemd/system
+# fallback was decommissioned — probing it produced misleading "live unit missing" drift.
 unit_live_path() {
   local u="$1"
-  if [ -f "$HOME/.config/systemd/user/$u" ]; then
-    printf '%s' "$HOME/.config/systemd/user/$u"
-  else
-    printf '%s' "/etc/systemd/system/$u"
-  fi
+  printf '%s' "$HOME/.config/systemd/user/$u"
+}
+
+# lane_gate_var <unit-basename> — echo the env var that gates the unit's lane, or empty
+# if the unit is always installed. Extend as more optional lanes ship (each lane's units
+# map to its CI_FIXER_ENABLED-style gate: AUTOMERGE_ENABLED, etc.).
+lane_gate_var() {
+  case "$1" in
+    ci-fixer.service|ci-fixer.timer) printf '%s' "CI_FIXER_ENABLED" ;;
+    *) printf '%s' "" ;;
+  esac
+}
+
+# lane_disabled <unit-basename> — 0 (true) when the unit's lane gate is present and its
+# rendered value is "0"/empty; 1 otherwise (no gate => always enabled). Reads the gate
+# var indirectly from the current render env (set by setup_vars).
+lane_disabled() {
+  local gate val
+  gate="$(lane_gate_var "$1")"
+  [ -n "$gate" ] || return 1
+  val="${!gate:-}"
+  [ "$val" = "0" ] || [ -z "$val" ]
 }
 
 do_render() {
@@ -210,7 +240,15 @@ do_diff() {
     local base rel
     if [[ "$u" == */clawhip.service.d/* ]]; then base="clawhip.service.d/$(basename "$u")"; else base="$(basename "$u")"; fi
     rel="$(unit_live_path "$base")"
-    if [ ! -f "$rel" ]; then echo "diff: live unit missing: $rel"; drift=1; continue; fi
+    if [ ! -f "$rel" ]; then
+      # A unit whose lane is disabled is deliberately NOT installed live — that is
+      # expected state, not drift. Report it as a NOTE and move on.
+      if lane_disabled "$(basename "$base")"; then
+        echo "diff: NOTE: $(basename "$base") belongs to disabled lane ($(lane_gate_var "$(basename "$base")")=0) — not installed"
+        continue
+      fi
+      echo "diff: live unit missing: $rel"; drift=1; continue
+    fi
     if ! diff -u --label "live:$rel" --label "staged:units/$base" "$rel" "$OUT/units/$base"; then drift=1; fi
   done
   if [ "$drift" -eq 0 ]; then echo "render diff: zero drift"; else echo "render diff: DRIFT (see above)"; fi
@@ -245,6 +283,10 @@ do_apply() {
     for u in "$OUT"/units/*.service "$OUT"/units/*.timer "$OUT"/units/*.path; do
       [ -e "$u" ] || continue
       base="$(basename "$u")"
+      if lane_disabled "$base"; then
+        echo "skipped unit (disabled lane $(lane_gate_var "$base")=0): $base"
+        continue
+      fi
       dest="$HOME/.config/systemd/user/$base"
       diff -q "$dest" "$u" >/dev/null 2>&1 || install_file "$u" "$dest" "-"
     done

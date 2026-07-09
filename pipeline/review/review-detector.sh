@@ -42,6 +42,11 @@ BOT="${GJC_BOT_LOGIN:-engels74-bot}"
 REVIEWER="${REVIEW_REVIEWER:-augmentcode[bot]}"
 # B-2 policy lane config (rendered from [review.policy] into gjc-bot.env).
 POLICY_LEDGER="${REVIEW_POLICY_LEDGER:-$STATE_DIR/review-policy.jsonl}"
+# Sentinel contract: the renderer emits a lone "-" (never empty) when [review.policy]
+# automated_authors is explicitly []. The "-" is a non-login placeholder that satisfies
+# subst's empty-{{VAR}} guard; is_automated_author() below treats it as an EMPTY author
+# set so the policy lane matches no one. The :- default only fires when the var is truly
+# unset (script run outside the rendered env).
 REVIEW_AUTOMATED_AUTHORS="${REVIEW_AUTOMATED_AUTHORS:-renovate[bot] dependabot[bot]}"
 MAX_HANDLER_RUNS="${REVIEW_POLICY_MAX_HANDLER_RUNS:-2}"
 DECIDE_BIN="${REVIEW_DECIDE_BIN:-$SCRIPTS_DIR/review/review-policy-decide.sh}"
@@ -67,6 +72,9 @@ mark_seen() { "$FLOCK" "$SEEN_LOCK" bash -c "$JQ -nc --arg k '$1' --arg t '$(dat
 # literally (space- OR comma-joined lists both accepted).
 is_automated_author() {
   local a="$1" x rc=1 list
+  # Sentinel: a lone "-" means the empty author set (rendered from `automated_authors = []`).
+  # Return non-match unconditionally so the policy lane is disabled.
+  [ "$REVIEW_AUTOMATED_AUTHORS" = "-" ] && return 1
   list="$(printf '%s' "$REVIEW_AUTOMATED_AUTHORS" | tr ',' ' ')"
   set -f
   for x in $list; do [ "$x" = "$a" ] && { rc=0; break; }; done
