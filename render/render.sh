@@ -90,14 +90,28 @@ setup_vars() {
   RELAY_MANAGED_RATE="$(cfg '.relay.managed_rate')"; RELAY_MANAGED_RATE="${RELAY_MANAGED_RATE:-medium}"
   export RELAY_MANAGED_RATE
   # RELAY_WORKITEM_CHANNELS: comma-joined numeric IDs of repos opting in via
-  # workitem_surface=true. EMPTY when every repo defaults false => feature fully OFF.
+  # workitem_surface=true, plus any extra named channels in [relay].workitem_channels
+  # (for non-repo canary surfaces such as gjc-lab). EMPTY when both selectors are
+  # empty => feature fully OFF.
   local row chname cid wic=""
+  add_workitem_cid() {
+    local candidate="$1"
+    case ",$wic," in
+      *",$candidate,"*) ;;
+      *) wic="${wic:+$wic,}$candidate" ;;
+    esac
+  }
   while IFS= read -r row; do
     [ "$(jq -r '.workitem_surface // false' <<<"$row")" = "true" ] || continue
     chname="$(jq -r '.channel' <<<"$row")"
     cid="$(ch "$chname")"
-    wic="${wic:+$wic,}$cid"
+    add_workitem_cid "$cid"
   done < <(jq -c '.repos[]' <<<"$CFG_JSON")
+  while IFS= read -r chname; do
+    [ -n "$chname" ] || continue
+    cid="$(ch "$chname")"
+    add_workitem_cid "$cid"
+  done < <(jq -r '(.relay.workitem_channels // [])[]' <<<"$CFG_JSON")
   RELAY_WORKITEM_CHANNELS="$wic"; export RELAY_WORKITEM_CHANNELS
 }
 

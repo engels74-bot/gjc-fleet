@@ -38,6 +38,10 @@ bind = "127.0.0.1:25295"
 #   high = 4 tokens / 5s   (throughput)
 # Or an explicit "<tokens>/<window>s", e.g. "3/5s" (tokens 1..=4, window >= 1s).
 managed_rate = "medium"
+# Optional extra channel NAMES to opt into the managed work-item path without adding
+# a repo monitor. Useful for canary/lab surfaces such as gjc-lab. Repo channels should
+# normally use per-[[repos]] workitem_surface instead.
+# workitem_channels = ["gjc-lab"]
 
 # Optional per-channel debounce pins for the v2 managed path. Channel NAME -> seconds;
 # the renderer resolves each to RELAY_DEBOUNCE_SECS__<numeric-id>. Omit entirely (the

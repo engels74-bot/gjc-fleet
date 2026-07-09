@@ -110,8 +110,9 @@ overhaul), `relay.env`, the supervision scripts (`dlq-watch.sh`, `alert.sh`,
 (`render/render.sh` target, 0600) rather than hand-maintained. Its keys are `RELAY_BIND`,
 `RELAY_DESIGN_SYSTEM`, `GJC_ALERT_CHANNEL` (host-local numeric ID for `#gjc-approvals`), plus the v2
 managed-path keys appended by `render.sh`: `RELAY_STATE_DIR`, `RELAY_MANAGED_RATE` (preset or
-`<t>/<w>s`), `RELAY_WORKITEM_CHANNELS` (comma-joined opt-in channel IDs; **rendered empty by default**
-⇒ managed path OFF ⇒ byte-identical v1), `GJC_LAB_CHANNEL` (host-local canary ID for the heartbeat),
+`<t>/<w>s`), `RELAY_WORKITEM_CHANNELS` (comma-joined opt-in channel IDs from per-repo
+`workitem_surface = true` plus any `[relay].workitem_channels` extra channel names; **rendered empty
+by default** ⇒ managed path OFF ⇒ byte-identical v1), `GJC_LAB_CHANNEL` (host-local canary ID for the heartbeat),
 and any optional per-channel `RELAY_DEBOUNCE_SECS__<cid>` pins. Values are host-local; the numeric
 channel IDs live only in the rendered file and `fleet.toml`, never in the tracked template. Since the 2026-07-07 gjc-fleet
 monorepo migration folded the source's brief standalone `engels74-bot/gjc-relay` repo into

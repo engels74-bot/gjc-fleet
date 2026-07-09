@@ -51,6 +51,7 @@ Copy `fleet.toml.example` (committed, value-free) to `~/.config/gjc-fleet/fleet.
 | `[discord.channels]` | `default`, `gjc-events`, `gjc-approvals`, `gjc-lab`, one per `[[repos]]` | **untracked-sensitive** | The name→numeric-channel-ID map. **This table, plus the env files it renders into, is the ONLY place numeric Discord IDs exist on this host** — `render/render.sh check` fails CI if one leaks anywhere else in the repo (the committed example ships a zero-padded, all-placeholder digit string of the right length for exactly this key, and only that shape, so the example itself never trips the gate — see `fleet.toml.example` directly for the exact placeholder form; never reproduced here) |
 | `[relay]` | `bind` | shipping-default | Loopback bind address for gjc-relay (`127.0.0.1:25295`) |
 | `[relay]` | `managed_rate` | shipping-default | Token-bucket budget for the v2 managed work-item path. A **preset** (`low` = 2/5s, `medium` = 3/5s (default), `high` = 4/5s) or an **explicit** `"<tokens>/<window>s"` (e.g. `"3/5s"`; tokens 1..=4, window ≥1s). Renders to `RELAY_MANAGED_RATE`; the relay re-validates and panics on garbage, so a bad value never ships silently |
+| `[relay]` | `workitem_channels` | shipping-default | Optional list of extra channel **names** to include in `RELAY_WORKITEM_CHANNELS` without adding repo monitors. Use this for canary/lab surfaces such as `gjc-lab`; production repo channels should usually use per-`[[repos]] workitem_surface = true` |
 | `[relay.debounce]` | channel-name → seconds | shipping-default | **Optional** per-channel debounce pins for the v2 managed path. Each entry renders to `RELAY_DEBOUNCE_SECS__<numeric-id>`. Omit the whole table (the default) to use the relay's global debounce for every channel |
 | `[brain]` | `model`, `nanogpt_base_url` | per-deployment | The no-tools LLM used for gjc-bot triage/merge-gate/**review-policy** verdicts (the BRAIN lane — NanoGPT-compatible endpoint + model id) |
 | `[review]` | `engine` | shipping-default | The **ENGINE lane** coding engine for the review handler run: `gjc` (default; inherits gjc's own backend/models) or `claude` (legacy headless). Renders to `REVIEW_ENGINE`. The CI-fix lane **shares** this one knob (one cutover decision — see [40-gjc-bot-automation.md](40-gjc-bot-automation.md#llm-invocation-lanes-engine-vs-brain)); a host MAY pin `claude` until the deploy-time cutover gate passes |
@@ -108,8 +109,9 @@ channel IDs (`ISSUE_NOTIFY_CHANNEL`/`MERGE_GATE_CHANNEL`/`REVIEW_NOTIFY_CHANNEL`
 
 **`~/.gjc-relay/relay.env`** (from `relay.env.tmpl`, mode 0600) — the v2 managed-path lines are
 **appended by `render.sh`** after the tracked template: `RELAY_MANAGED_RATE` (always),
-`RELAY_WORKITEM_CHANNELS` (comma-joined numeric IDs of the `workitem_surface = true` repos —
-**empty by default** ⇒ managed path OFF), `GJC_LAB_CHANNEL` (the lab channel numeric ID for
+`RELAY_WORKITEM_CHANNELS` (comma-joined numeric IDs of the `workitem_surface = true` repos plus
+any `[relay].workitem_channels` extra names — **empty by default** ⇒ managed path OFF),
+`GJC_LAB_CHANNEL` (the lab channel numeric ID for
 `relay-heartbeat.sh`), and any `RELAY_DEBOUNCE_SECS__<numeric-id>` lines from `[relay.debounce]`
 (none by default). See `render.sh` `do_render` for the exact append order.
 
