@@ -1,0 +1,13 @@
+[Unit]
+Description=Auto-merge lane — merge CI-green, policy-settled automated-author PRs via gh --match-head-commit (default OFF)
+Documentation=file:{{FLEET_REPO}}/docs/40-gjc-bot-automation.md
+
+[Service]
+Type=oneshot
+Environment=PATH=/home/linuxbrew/.linuxbrew/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=-%h/.gjc-bot/gjc-bot.env
+ExecStart={{FLEET_REPO}}/pipeline/review/automerge.sh
+Nice=15
+# No KillMode override: unlike ci-fixer/review-detector this poller merges SYNCHRONOUSLY inline
+# (no detached _handler to keep alive past the oneshot's main process), so the default
+# control-group kill is correct.

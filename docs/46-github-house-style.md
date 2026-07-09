@@ -131,9 +131,15 @@ The three canonical shapes, verdict-first every time:
 
 ### (c) Merge-gate advisory comment
 
-Posted by `pipeline/review/merge-gate.sh` on a CI-green bot PR. A `###` heading, the verdict inline,
-an explicit "advisory only" disclaimer, failing-check detail (if any) collapsed via `gmd_details`,
-and exactly one footer. Composed through `gmd_h3` / `gmd_details` / `gmd_footer`.
+Posted by `pipeline/review/merge-gate.sh` on a CI-green **bot-authored** PR. A `###` heading, the
+verdict inline, an explicit "advisory only" disclaimer, failing-check detail (if any) collapsed via
+`gmd_details`, and exactly one footer. Composed through `gmd_h3` / `gmd_details` / `gmd_footer`.
+
+The "no auto-merge; a human decides" disclaimer below is scoped to bot-authored PRs: those stay
+advisory and a human merges them. **Automated-author** PRs (renovate/dependabot) are *not* gated
+here — they are owned by the auto-merge lane (`pipeline/review/automerge.sh`), which merges them
+directly once CI is green and the review policy has settled. merge-gate carves those authors out of
+its listing, so it never advises on an automerge-owned PR.
 
 ````markdown
 ### Advisory merge gate — CI green

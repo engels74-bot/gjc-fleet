@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the auto-merge lane every 10 minutes (inert while AUTOMERGE_ENABLED=0)
+Documentation=file:{{FLEET_REPO}}/docs/40-gjc-bot-automation.md
+
+[Timer]
+OnCalendar=*:0/10
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

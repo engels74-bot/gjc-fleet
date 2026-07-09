@@ -58,6 +58,14 @@ DRY_RUN="${DRY_RUN:-0}"
 # B-2 policy re-arm knob (Workstream D): hard ceiling on force-push re-arms per PR.
 REVIEW_POLICY_MAX_REARMS="${REVIEW_POLICY_MAX_REARMS:-2}"
 
+# ── K7 review-backlog signal (Workstream F, PM4 mitigation) ───────────────────────────────
+# Each poll, compute the OLDEST UNHANDLED review age per repo (see review_backlog_check for the
+# exact definition) and, above the threshold, emit ONE review.backlog design-system embed to an
+# ops channel. Under threshold => SILENT. Resolved WITHOUT `:?` so the script stays sourceable;
+# the channel defaults to the approvals channel merge-gate/policy already escalate to.
+REVIEW_BACKLOG_ALERT_MINS="${REVIEW_BACKLOG_ALERT_MINS:-120}"
+REVIEW_BACKLOG_CHANNEL="${REVIEW_BACKLOG_CHANNEL:-${MERGE_GATE_CHANNEL:-}}"
+
 # Shared JSONL ledger helpers (per-file flock) for the policy lane bookkeeping.
 # shellcheck source=pipeline/lib/ledger.sh
 source "$SCRIPTS_DIR/lib/ledger.sh"
@@ -66,6 +74,9 @@ source "$SCRIPTS_DIR/lib/ledger.sh"
 # REVIEWER above so its `:=` defaults never override them.
 # shellcheck source=pipeline/review/review-shared.sh
 source "$SCRIPTS_DIR/review/review-shared.sh"
+# Design-system Discord embed emitter (K7 review.backlog signal only).
+# shellcheck source=pipeline/lib/discord-embed.sh
+source "$SCRIPTS_DIR/lib/discord-embed.sh"
 
 mkdir -p "$STATE_DIR"; chmod 700 "$STATE_DIR" 2>/dev/null || true; touch "$SEEN"
 log() { printf '%s [review-detect] %s\n' "$(date -Is)" "$*" >>"$LOG"; }
@@ -288,6 +299,56 @@ policy_lane() {
   fi
 }
 
+# emit_embed <channel> <args...> — send iff the channel is configured; never fatal.
+emit_embed() {
+  local channel="$1"; shift
+  [ -n "$channel" ] || { log "backlog embed skipped: no channel configured"; return 0; }
+  discord_embed --channel "$channel" "$@" || log "backlog embed send failed"
+}
+
+# ── K7 review-backlog signal (Workstream F) ───────────────────────────────────────────────
+# review_backlog_check <repo> — the OLDEST UNHANDLED review age for a repo, above which the
+# review/policy lane is falling behind and a human should look. Definition (defensible + cheap):
+# among the repo's OPEN reviewable PRs (bot-authored -> existing lane, OR automated-author ->
+# policy lane), an "unhandled" PR is one carrying a suggestion-bearing augmentcode[bot] review
+# that the fleet has NOT recorded acting on — i.e. neither the existing-lane SEEN marker for that
+# review-id NOR a policy-lane #consumed marker exists. Its age is measured from the review's
+# submitted_at (the moment the work landed in the queue). Above REVIEW_BACKLOG_ALERT_MINS ->
+# emit ONE review.backlog embed; SILENT otherwise. Deduped to at most one alert per repo per
+# host-hour (a #backlog-alerted:<repo>:<hour> policy-ledger key) so a fast poll cannot spam.
+review_backlog_check() {
+  local repo="$1" now oldest=0 oldest_pr="" pr login review rid sub subepoch age akey mins
+  now="$(date +%s)"
+  while IFS=$'\t' read -r pr login _; do
+    [ -n "$pr" ] || continue
+    # Only reviewable lanes qualify (a human-authored PR is out of the fleet's review scope).
+    [ "$login" = "$BOT" ] || is_automated_author "$login" || continue
+    review="$(latest_suggestion_review "$repo" "$pr")" || continue          # no pending suggestion review
+    rid="$(printf '%s' "$review" | "$JQ" -r '.id')"
+    # Handled? existing lane records the review-id in SEEN; policy lane records #consumed.
+    seen "${repo}#${pr}#${rid}" && continue
+    ledger_seen "$POLICY_LEDGER" "${repo}#${pr}#consumed" && continue
+    sub="$(printf '%s' "$review" | "$JQ" -r '.submitted_at // empty')"
+    [ -n "$sub" ] || continue
+    subepoch="$(date -d "$sub" +%s 2>/dev/null)" || continue
+    [ -n "$subepoch" ] || continue
+    age=$(( now - subepoch ))
+    if [ "$age" -gt "$oldest" ]; then oldest="$age"; oldest_pr="$pr"; fi
+  done < <("$GH" pr list -R "$GH_OWNER/$repo" --state open --json number,author \
+             --jq '.[] | "\(.number)\t\(.author.login)\t"' 2>/dev/null)
+
+  [ "$oldest" -gt $(( REVIEW_BACKLOG_ALERT_MINS * 60 )) ] || return 0        # under threshold -> SILENT
+
+  akey="${repo}#backlog-alerted:$(date +%Y%m%d%H)"
+  ledger_seen "$POLICY_LEDGER" "$akey" && return 0                           # already alerted this hour
+  ledger_mark "$POLICY_LEDGER" "$akey"
+  mins=$(( oldest / 60 ))
+  log "review backlog: $repo oldest unhandled review is ${mins}m old (pr #$oldest_pr, threshold ${REVIEW_BACKLOG_ALERT_MINS}m) — alerting"
+  emit_embed "$REVIEW_BACKLOG_CHANNEL" --kind review.backlog --repo "$GH_OWNER/$repo" --status backlog \
+    --number "$oldest_pr" --stage review --url "https://github.com/$GH_OWNER/$repo/pull/$oldest_pr" \
+    --message "$(printf '%b' "${GH_OWNER}/${repo} — review backlog: oldest unhandled review is ${mins}m old (threshold ${REVIEW_BACKLOG_ALERT_MINS}m).\nThe review/policy lane is falling behind; a human should take a look.")"
+}
+
 main() {
   # K5 self single-flight: one poll pass at a time. The systemd timer can fire while a slow
   # pass is still walking repos; a second overlapping poller would race the policy lanes.
@@ -305,6 +366,8 @@ main() {
       fi
     done < <("$GH" pr list -R "$GH_OWNER/$repo" --state open --json number,author \
                --jq '.[] | "\(.number)\t\(.author.login)"' 2>/dev/null)
+    # K7: after routing the repo's reviews, alert if the oldest unhandled review is too old.
+    review_backlog_check "$repo"
   done
 }
 

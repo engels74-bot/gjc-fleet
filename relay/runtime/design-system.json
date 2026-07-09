@@ -193,6 +193,31 @@
    "color": 15158332,
    "emoji": "\ud83d\udea8",
    "title": "\ud83d\udea8 CI fix escalation"
+  },
+  "automerge": {
+   "color": 7291333,
+   "emoji": "\ud83d\udd00",
+   "title": "\ud83d\udd00 Auto-merge"
+  },
+  "automerge.escalation": {
+   "color": 15158332,
+   "emoji": "\ud83d\udea8",
+   "title": "\ud83d\udea8 Auto-merge escalation"
+  },
+  "hermes-update": {
+   "color": 5793266,
+   "emoji": "\ud83d\udd04",
+   "title": "\ud83d\udd04 Hermes update"
+  },
+  "fleet-update": {
+   "color": 5793266,
+   "emoji": "\ud83d\udee0\ufe0f",
+   "title": "\ud83d\udee0\ufe0f Fleet update"
+  },
+  "review.backlog": {
+   "color": 15844367,
+   "emoji": "\u23f3",
+   "title": "\u23f3 Review backlog"
   }
  },
  "workitem": {
