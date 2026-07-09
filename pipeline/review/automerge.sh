@@ -68,6 +68,10 @@ POLICY_LEDGER="${REVIEW_POLICY_LEDGER:-$STATE_DIR/review-policy.jsonl}"
 # Guardrail knobs (rendered from [automerge] into gjc-bot.env — render wiring is a SEPARATE
 # consolidated pass; here we just read env with defaults so the lane is self-contained + OFF).
 AUTOMERGE_ENABLED="${AUTOMERGE_ENABLED:-0}"
+# Gated bot self-approval (a NEW mutation — DEFAULT 0/OFF). When 1, the lane submits a formal APPROVE
+# review on the exact head sha it is about to merge so a required_approving_review_count=1 branch-
+# protection rule is satisfied (the bot is NOT the PR author, so its approval counts). See ensure_approved.
+AUTOMERGE_APPROVE="${AUTOMERGE_APPROVE:-0}"
 # Author scoping (rendered from [automerge].authors). Space-joined login list; a lone "-" is
 # the sentinel for the EMPTY set (rendered from `authors = []`) so the lane touches no one.
 AUTOMERGE_AUTHORS="${AUTOMERGE_AUTHORS:-renovate[bot] dependabot[bot]}"
@@ -255,6 +259,29 @@ policy_settled() {
   return 1
 }
 
+# ── impure seam (individually stubbable for the offline guardrail tests) ────────────────────
+# ensure_approved <full> <pr> <sha> — the bot's OWN gated self-approval on the EXACT head sha it is
+# about to merge. NO-OP passthrough when AUTOMERGE_APPROVE != 1 (repos not requiring an approving
+# review are unaffected -> return 0). Else dedup on #approved:<sha> (a prior poll already approved
+# this sha -> return 0), then submit a formal APPROVE review via `gh pr review --approve`. The bot is
+# NOT the PR author (renovate/dependabot is), so its approval satisfies a required_approving_review_
+# count=1 branch-protection rule. Success -> ledger_mark the key + log + return 0; a transient failure
+# -> log + return 1 (the caller defers like a CI re-check miss; NO #try is burned on it).
+ensure_approved() {
+  local full="$1" pr="$2" sha="$3" akey
+  [ "$AUTOMERGE_APPROVE" = "1" ] || return 0
+  akey="${full}#pr:${pr}#approved:${sha}"
+  ledger_seen "$LEDGER" "$akey" && return 0
+  if "$GH" pr review "$pr" -R "$full" --approve \
+       --body "auto-approved by the gjc-bot automerge lane — CI green + review policy settled; automated dependency PR" >>"$LOG" 2>&1; then
+    ledger_mark "$LEDGER" "$akey"
+    log "approved $full#$pr sha=$sha (gh pr review --approve)"
+    return 0
+  fi
+  log "approve FAILED $full#$pr sha=$sha (gh pr review --approve) — retry next poll"
+  return 1
+}
+
 # attempt_merge <repo> <full> <pr> <sha> — the merge critical section. Runs entirely inside the
 # per-repo lock (+ a probe of the global review.lock). Communicates its outcome to the caller via
 # the exit code so the announcement (and per-poll counting) happen in the parent, lock released:
@@ -282,6 +309,12 @@ attempt_merge() {
     # Re-check CI on the exact sha we are about to merge (stale-sha CI race).
     local st; st="$(ci_state "$full" "$sha")"
     if [ "$st" != "GREEN" ]; then log "defer $full#$pr: CI=$st in-lock (was GREEN) — retry next poll"; exit 77; fi
+    # Gated self-approval on the EXACT sha we are about to merge (NO-OP when AUTOMERGE_APPROVE != 1).
+    # A transient approve failure DEFERs with the CI-defer semantics (exit 77) so the retry lands next
+    # poll — do NOT burn a #try on it.
+    if ! ensure_approved "$full" "$pr" "$sha"; then
+      log "defer $full#$pr: self-approval not settled in-lock — retry next poll"; exit 77
+    fi
     # This is a REAL attempt: record #try BEFORE the merge so a head-mismatch reject still burns it.
     ledger_mark "$LEDGER" "${full}#pr:${pr}#try"
     if "$GH" pr merge "$pr" -R "$full" "--$AUTOMERGE_METHOD" --match-head-commit "$sha" --delete-branch=false >>"$LOG" 2>&1; then

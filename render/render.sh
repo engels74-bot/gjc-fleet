@@ -102,13 +102,17 @@ setup_vars() {
   # [merge] — bot-side automerge lane (F). DEFAULT OFF (automerge_enabled=false => 0). Rendered
   # as "0"/"1" and defaulted knobs (never empty) so subst's empty-var guard never trips.
   AUTOMERGE_ENABLED=0; [ "$(cfg '.merge.automerge_enabled')" = "true" ] && AUTOMERGE_ENABLED=1
+  # Gated bot self-approval (a NEW mutation — DEFAULT OFF). When 1, the lane submits a formal
+  # APPROVE review on the exact head sha before merging so a required_approving_review_count=1
+  # branch-protection rule is satisfied. Rendered "0"/"1" (never empty), same shape as ENABLED.
+  AUTOMERGE_APPROVE=0; [ "$(cfg '.merge.automerge_approve')" = "true" ] && AUTOMERGE_APPROVE=1
   AUTOMERGE_AUTHORS="$(list_or_sentinel "$(jq -r '(.merge.automerge_authors // ["renovate[bot]","dependabot[bot]"]) | join(" ")' <<<"$CFG_JSON")")"
   AUTOMERGE_METHOD="$(cfg '.merge.automerge_method')"; AUTOMERGE_METHOD="${AUTOMERGE_METHOD:-squash}"
   AUTOMERGE_MIN_HEAD_AGE_MINS="$(cfg '.merge.automerge_min_head_age_mins')"; AUTOMERGE_MIN_HEAD_AGE_MINS="${AUTOMERGE_MIN_HEAD_AGE_MINS:-10}"
   AUTOMERGE_REVIEW_WAIT_MINS="$(cfg '.merge.automerge_review_wait_mins')"; AUTOMERGE_REVIEW_WAIT_MINS="${AUTOMERGE_REVIEW_WAIT_MINS:-30}"
   AUTOMERGE_MAX_ATTEMPTS="$(cfg '.merge.automerge_max_attempts')"; AUTOMERGE_MAX_ATTEMPTS="${AUTOMERGE_MAX_ATTEMPTS:-3}"
   AUTOMERGE_MAX_PER_POLL="$(cfg '.merge.automerge_max_per_poll')"; AUTOMERGE_MAX_PER_POLL="${AUTOMERGE_MAX_PER_POLL:-1}"
-  export AUTOMERGE_ENABLED AUTOMERGE_AUTHORS AUTOMERGE_METHOD AUTOMERGE_MIN_HEAD_AGE_MINS AUTOMERGE_REVIEW_WAIT_MINS AUTOMERGE_MAX_ATTEMPTS AUTOMERGE_MAX_PER_POLL
+  export AUTOMERGE_ENABLED AUTOMERGE_APPROVE AUTOMERGE_AUTHORS AUTOMERGE_METHOD AUTOMERGE_MIN_HEAD_AGE_MINS AUTOMERGE_REVIEW_WAIT_MINS AUTOMERGE_MAX_ATTEMPTS AUTOMERGE_MAX_PER_POLL
   # review.backlog liveness signal (K7) — oldest-unhandled-PR-age alert threshold (minutes).
   REVIEW_BACKLOG_ALERT_MINS="$(cfg '.review.policy.backlog_alert_mins')"; REVIEW_BACKLOG_ALERT_MINS="${REVIEW_BACKLOG_ALERT_MINS:-120}"
   export REVIEW_BACKLOG_ALERT_MINS

@@ -128,6 +128,11 @@ authors           = ["engels74-bot", "renovate[bot]", "dependabot[bot]"]
 # `~/.gjc-bot/automerge.disable` marker, DRY_RUN unset, the repo not opted out, and no
 # `automerge-hold` label on the PR. Leave false until the zondarr-first canary passes.
 automerge_enabled           = false
+# Gated bot self-approval (DEFAULT OFF). When true, engels74-bot submits a formal APPROVE review on
+# the exact head sha it is about to merge — the bot is NOT the PR author (renovate/dependabot is), so
+# its approval satisfies a `required_approving_review_count = 1` branch-protection rule — then merges.
+# Leave false unless the repo's branch protection requires an approving review before merge.
+automerge_approve           = false
 automerge_authors           = ["renovate[bot]", "dependabot[bot]"]
 automerge_method            = "squash"
 # Head-commit quiet period before a merge (lets renovate settle a rebase/CI first), how long to

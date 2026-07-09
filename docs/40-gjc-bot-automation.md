@@ -401,7 +401,10 @@ fix); a suggestion review not yet `#consumed` ⇒ defer; no suggestion review ye
 `review-<repo>.lock` **non-blocking** + a non-blocking PROBE of the global `review.lock` (either busy ⇒
 defer 75). IN-lock, in order: idempotent `state==MERGED` check (record `#merged`, no attempt);
 **re-fetch HEAD sha** (moved ⇒ stale, defer, no real attempt); **re-check `ci_state`** (must still be
-GREEN); `ledger_mark #try` **before** the merge (so a head-mismatch reject still burns the attempt); then
+GREEN); then a **gated self-approval** (`ensure_approved`): when `AUTOMERGE_APPROVE=1` the bot submits a
+formal APPROVE review on the exact head sha (satisfying a required-review rule since the bot is not the PR
+author), ledger-deduped per sha, and a transient approve failure DEFERs (exit 77, no `#try`); it is a pure
+no-op when `AUTOMERGE_APPROVE=0`. Then `ledger_mark #try` **before** the merge (so a head-mismatch reject still burns the attempt); then
 `gh pr merge <pr> --squash --match-head-commit <sha> --delete-branch=false`. Success ⇒ `#merged:<sha>` +
 an `automerge` embed to `#gjc-approvals`. Server-side `--match-head-commit` is the race guard: a
 force-push between the CI check and the merge is REJECTED by GitHub. `AUTOMERGE_METHOD` is validated to
@@ -852,3 +855,5 @@ per-file locking), ledgers (`issues.jsonl`, `reviews.jsonl`, `merge-gate.jsonl`,
   This page: automerge + fleet-update + tmux-reaper lanes documented; ci-fixer author scope, policy
   re-arm, and K lock-topology added; engine dispatch (gjc) + cutover-complete; stale gjc-reap/push-race
   questions resolved.
+- 2026-07-09 — Folded in the gated in-lock bot self-approval step (`ensure_approved`, `AUTOMERGE_APPROVE`,
+  default OFF): after the CI re-check, before the merge, ledger-deduped per sha.
