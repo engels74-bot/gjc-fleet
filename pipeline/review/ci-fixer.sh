@@ -77,6 +77,9 @@ export PATH="$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.local/bin:/home/linuxbrew/.l
 # Shared JSONL ledger helpers (per-file flock) for caps / backoff / give-up bookkeeping.
 # shellcheck source=pipeline/lib/ledger.sh
 source "$SCRIPTS_DIR/lib/ledger.sh"
+# Shared author matching (normalises `app/renovate` vs `renovate[bot]`; see the file).
+# shellcheck source=pipeline/lib/authors.sh
+source "$SCRIPTS_DIR/lib/authors.sh"
 # Shared CI-state classifier (single source of truth for ci_state; identical to merge-gate).
 # shellcheck source=pipeline/lib/gh-ci.sh
 source "$SCRIPTS_DIR/lib/gh-ci.sh"
@@ -97,19 +100,12 @@ export GH_TOKEN
 list_bot_repos() { ( shopt -s nullglob; for d in "$GH_ROOT"/*/; do d="${d%/}"; b="${d##*/}"; case "$b" in review|*.gajae-code-worktrees) continue ;; esac; [ -d "$d/.git" ] && printf '%s ' "$b"; done ); }
 REPOS="${CI_FIXER_REPOS:-$(list_bot_repos)}"
 
-# is_ci_fixer_author <login> -> 0 if <login> is in CI_FIXER_AUTHORS. Glob-safe: globbing is
-# disabled while splitting so bracketed logins like "renovate[bot]" match literally (space- OR
-# comma-joined lists both accepted). Mirrors review-detector.sh's is_automated_author().
+# is_ci_fixer_author <login> -> 0 if <login> is in CI_FIXER_AUTHORS. Delegates to
+# author_matches (lib/authors.sh), which normalises the App-login mismatch (`gh` emits
+# `app/renovate` while config lists `renovate[bot]`) and preserves the "-" empty-set
+# sentinel + glob-safe token splitting. Mirrors review-detector.sh's is_automated_author().
 is_ci_fixer_author() {
-  local a="$1" x rc=1 list
-  # Sentinel: a lone "-" means the empty author set (rendered from `authors = []`).
-  # Return non-match unconditionally so the fixer touches no one.
-  [ "$CI_FIXER_AUTHORS" = "-" ] && return 1
-  list="$(printf '%s' "$CI_FIXER_AUTHORS" | tr ',' ' ')"
-  set -f
-  for x in $list; do [ "$x" = "$a" ] && { rc=0; break; }; done
-  set +f
-  return "$rc"
+  author_matches "$1" "$CI_FIXER_AUTHORS"
 }
 
 # ── kill-switch gate ──────────────────────────────────────────────────────────────────────

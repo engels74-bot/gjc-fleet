@@ -32,6 +32,9 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/gh-ci.sh"
 # Shared GitHub-Flavored-Markdown composition helpers (house style — docs/46-github-house-style.md).
 # shellcheck source=pipeline/lib/github-md.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/github-md.sh"
+# Shared author matching (normalises `app/renovate` vs `renovate[bot]`; see the file).
+# shellcheck source=pipeline/lib/authors.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/lib/authors.sh"
 GH_OWNER="${GJC_BOT_GH_OWNER:-engels74}"
 BOT="${GJC_BOT_LOGIN:-engels74-bot}"
 # ── Automated-author carve-out (Workstream F: division of labour) ──────────────────────────
@@ -42,14 +45,11 @@ BOT="${GJC_BOT_LOGIN:-engels74-bot}"
 # belt-and-braces so a FUTURE broadening of that listing can never make the gate advise on an
 # automerge-owned PR. Sentinel "-" = the empty set (rendered from `authors = []`).
 AUTOMERGE_AUTHORS="${AUTOMERGE_AUTHORS:-renovate[bot] dependabot[bot]}"
+# Delegates to author_matches (lib/authors.sh): normalises the App-login mismatch (`gh`
+# emits `app/renovate` while config lists `renovate[bot]`) and preserves the "-" empty-
+# set sentinel + glob-safe token splitting.
 is_automerge_author() {
-  local a="$1" x rc=1 list
-  [ "$AUTOMERGE_AUTHORS" = "-" ] && return 1
-  list="$(printf '%s' "$AUTOMERGE_AUTHORS" | tr ',' ' ')"
-  set -f
-  for x in $list; do [ "$x" = "$a" ] && { rc=0; break; }; done
-  set +f
-  return "$rc"
+  author_matches "$1" "$AUTOMERGE_AUTHORS"
 }
 # REPOS auto-scales to every cloned bot repo (G7 fan-out = just clone the repos).
 list_bot_repos() { ( shopt -s nullglob; for d in "$GH_ROOT"/*/; do d="${d%/}"; b="${d##*/}"; case "$b" in review|*.gajae-code-worktrees) continue ;; esac; [ -d "$d/.git" ] && printf '%s ' "$b"; done ); }

@@ -98,6 +98,9 @@ export PATH="$HOME/.bun/bin:$HOME/.cargo/bin:$HOME/.local/bin:/home/linuxbrew/.l
 # Shared JSONL ledger helpers (per-file flock) for #try / #merged / #blocked bookkeeping.
 # shellcheck source=pipeline/lib/ledger.sh
 source "$SCRIPTS_DIR/lib/ledger.sh"
+# Shared author matching (normalises `app/renovate` vs `renovate[bot]`; see the file).
+# shellcheck source=pipeline/lib/authors.sh
+source "$SCRIPTS_DIR/lib/authors.sh"
 # Shared CI-state classifier (single source of truth for ci_state; identical to merge-gate).
 # shellcheck source=pipeline/lib/gh-ci.sh
 source "$SCRIPTS_DIR/lib/gh-ci.sh"
@@ -119,29 +122,19 @@ export GH_TOKEN
 list_bot_repos() { ( shopt -s nullglob; for d in "$GH_ROOT"/*/; do d="${d%/}"; b="${d##*/}"; case "$b" in review|*.gajae-code-worktrees) continue ;; esac; [ -d "$d/.git" ] && printf '%s ' "$b"; done ); }
 REPOS="${AUTOMERGE_REPOS:-$(list_bot_repos)}"
 
-# is_automerge_author <login> -> 0 if <login> is in AUTOMERGE_AUTHORS. Glob-safe: globbing is
-# disabled while splitting so bracketed logins like "renovate[bot]" match literally (space- OR
-# comma-joined lists both accepted). Mirrors ci-fixer.sh's is_ci_fixer_author().
+# is_automerge_author <login> -> 0 if <login> is in AUTOMERGE_AUTHORS. Delegates to
+# author_matches (lib/authors.sh), which normalises the App-login mismatch (`gh` emits
+# `app/renovate` while config lists `renovate[bot]`) and preserves the "-" empty-set
+# sentinel + glob-safe token splitting. Mirrors ci-fixer.sh's is_ci_fixer_author().
 is_automerge_author() {
-  local a="$1" x rc=1 list
-  [ "$AUTOMERGE_AUTHORS" = "-" ] && return 1          # sentinel: empty author set
-  list="$(printf '%s' "$AUTOMERGE_AUTHORS" | tr ',' ' ')"
-  set -f
-  for x in $list; do [ "$x" = "$a" ] && { rc=0; break; }; done
-  set +f
-  return "$rc"
+  author_matches "$1" "$AUTOMERGE_AUTHORS"
 }
 
-# is_review_automated_author <login> -> 0 if <login> is in REVIEW_AUTOMATED_AUTHORS. Same
-# glob-safe membership test; decides whether an author needs review-policy settlement gating.
+# is_review_automated_author <login> -> 0 if <login> is in REVIEW_AUTOMATED_AUTHORS. Delegates
+# to author_matches (same App-login normalisation as is_automerge_author) so renovate/dependabot
+# PRs are still recognised here; decides whether an author needs review-policy settlement gating.
 is_review_automated_author() {
-  local a="$1" x rc=1 list
-  [ "$REVIEW_AUTOMATED_AUTHORS" = "-" ] && return 1
-  list="$(printf '%s' "$REVIEW_AUTOMATED_AUTHORS" | tr ',' ' ')"
-  set -f
-  for x in $list; do [ "$x" = "$a" ] && { rc=0; break; }; done
-  set +f
-  return "$rc"
+  author_matches "$1" "$REVIEW_AUTOMATED_AUTHORS"
 }
 
 # is_excluded_repo <repo> -> 0 if <repo> (bare name) is in AUTOMERGE_EXCLUDE_REPOS (space list).

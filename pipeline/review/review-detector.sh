@@ -69,6 +69,9 @@ REVIEW_BACKLOG_CHANNEL="${REVIEW_BACKLOG_CHANNEL:-${MERGE_GATE_CHANNEL:-}}"
 # Shared JSONL ledger helpers (per-file flock) for the policy lane bookkeeping.
 # shellcheck source=pipeline/lib/ledger.sh
 source "$SCRIPTS_DIR/lib/ledger.sh"
+# Shared author matching (normalises `app/renovate` vs `renovate[bot]`; see the file).
+# shellcheck source=pipeline/lib/authors.sh
+source "$SCRIPTS_DIR/lib/authors.sh"
 # Shared review helpers: latest_suggestion_review (moved here verbatim), plus head_contains
 # and pr_head_sha for the Workstream D force-push re-arm path. Sourced AFTER GH/JQ/GH_OWNER/
 # REVIEWER above so its `:=` defaults never override them.
@@ -86,19 +89,12 @@ export GH_TOKEN
 seen()      { "$FLOCK" "$SEEN_LOCK" "$JQ" -e --arg k "$1" 'select(.key==$k)' "$SEEN" >/dev/null 2>&1; }
 mark_seen() { "$FLOCK" "$SEEN_LOCK" bash -c "$JQ -nc --arg k '$1' --arg t '$(date -Is)' '{key:\$k,ts:\$t}' >> '$SEEN'"; }
 
-# is_automated_author <login> -> 0 if <login> is in REVIEW_AUTOMATED_AUTHORS. Glob-safe:
-# globbing is disabled while splitting so bracketed logins like "renovate[bot]" match
-# literally (space- OR comma-joined lists both accepted).
+# is_automated_author <login> -> 0 if <login> is in REVIEW_AUTOMATED_AUTHORS. Delegates
+# to author_matches (lib/authors.sh), which normalises the App-login mismatch (`gh`
+# emits `app/renovate` while config lists `renovate[bot]`) and preserves the "-" empty-
+# set sentinel + glob-safe token splitting.
 is_automated_author() {
-  local a="$1" x rc=1 list
-  # Sentinel: a lone "-" means the empty author set (rendered from `automated_authors = []`).
-  # Return non-match unconditionally so the policy lane is disabled.
-  [ "$REVIEW_AUTOMATED_AUTHORS" = "-" ] && return 1
-  list="$(printf '%s' "$REVIEW_AUTOMATED_AUTHORS" | tr ',' ' ')"
-  set -f
-  for x in $list; do [ "$x" = "$a" ] && { rc=0; break; }; done
-  set +f
-  return "$rc"
+  author_matches "$1" "$REVIEW_AUTOMATED_AUTHORS"
 }
 
 # latest_suggestion_review() now lives in review-shared.sh (sourced above), shared with the
