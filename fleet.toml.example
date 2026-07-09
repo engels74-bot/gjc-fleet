@@ -113,6 +113,45 @@ max_per_pr        = 5
 # Exponential backoff base, minutes. The minimum wait since the last attempt on a PR is
 # backoff_base_mins * 2^(attempts_so_far) — with the default 10: 10 / 20 / 40 / 80 …
 backoff_base_mins = 10
+# Author scope (Workstream E). The CI-fix lane acts on PRs whose author login is in this list.
+# Default (block absent): engels74-bot + renovate[bot] + dependabot[bot]. Set to [] to disable
+# by author (renders CI_FIXER_AUTHORS=- , which matches no login). Humans addable here later.
+authors           = ["engels74-bot", "renovate[bot]", "dependabot[bot]"]
+
+[merge]
+# Bot-side automerge lane (Workstream F): pipeline/review/automerge.sh merges eligible
+# automated-author PRs via `gh pr merge --squash --match-head-commit` (server-side head pin;
+# the flag is feature-probed and the lane fails CLOSED if the installed gh lacks it). merge-gate
+# stays advisory for bot-authored PRs; automerge owns renovate/dependabot PRs.
+#
+# DEFAULT OFF. Kill switches (ALL must allow): automerge_enabled = true here, no
+# `~/.gjc-bot/automerge.disable` marker, DRY_RUN unset, the repo not opted out, and no
+# `automerge-hold` label on the PR. Leave false until the zondarr-first canary passes.
+automerge_enabled           = false
+automerge_authors           = ["renovate[bot]", "dependabot[bot]"]
+automerge_method            = "squash"
+# Head-commit quiet period before a merge (lets renovate settle a rebase/CI first), how long to
+# wait for the one-review policy to settle, the max real attempts, and the max merges per repo
+# per 10-min poll (the rebase-cascade brake — oldest PR first).
+automerge_min_head_age_mins = 10
+automerge_review_wait_mins  = 30
+automerge_max_attempts      = 3
+automerge_max_per_poll      = 1
+
+[janitor]
+# Coordinator tmux reaper (Workstream I). The worktree janitor also reaps orphaned
+# gjc-coordinator-* tmux sessions whose coordinator-mcp state file reports state completed/stale
+# + live = false and is older than tmux_grace_mins. DEFAULT OFF; DRY_RUN logs intended reaps.
+tmux_reap_enabled  = false
+tmux_grace_mins    = 30
+
+[updates]
+# Nightly fleet tool-update lane (Workstream G): pipeline/maintenance/fleet-update.sh quiesces
+# the engines (gjc.lock + review.lock, bounded by quiesce_timeout_mins) then runs the headless
+# update-ai toolchain + `hermes update`, re-asserting the [pins] afterwards. DEFAULT OFF; other
+# kill switches: `~/.gjc-bot/fleet-update.disable` marker + DRY_RUN.
+tool_update_enabled  = false
+quiesce_timeout_mins = 45
 
 [pins]
 # Upstream engines — never vendored; installed via their own channels.

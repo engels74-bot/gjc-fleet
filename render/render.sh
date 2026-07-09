@@ -92,7 +92,35 @@ setup_vars() {
   CI_FIXER_MAX_PER_SHA="$(cfg '.ci_fixer.max_per_sha')"; CI_FIXER_MAX_PER_SHA="${CI_FIXER_MAX_PER_SHA:-2}"
   CI_FIXER_MAX_PER_PR="$(cfg '.ci_fixer.max_per_pr')"; CI_FIXER_MAX_PER_PR="${CI_FIXER_MAX_PER_PR:-5}"
   CI_FIXER_BACKOFF_BASE_MINS="$(cfg '.ci_fixer.backoff_base_mins')"; CI_FIXER_BACKOFF_BASE_MINS="${CI_FIXER_BACKOFF_BASE_MINS:-10}"
-  export CI_FIXER_ENABLED CI_FIXER_MAX_PER_SHA CI_FIXER_MAX_PER_PR CI_FIXER_BACKOFF_BASE_MINS
+  # [ci_fixer].authors (E) — CI-fix lane author scope. Space-joined; sentinel "-" when []
+  # (same contract as REVIEW_AUTOMATED_AUTHORS). Absent block => bot + renovate + dependabot.
+  CI_FIXER_AUTHORS="$(list_or_sentinel "$(jq -r '(.ci_fixer.authors // ["engels74-bot","renovate[bot]","dependabot[bot]"]) | join(" ")' <<<"$CFG_JSON")")"
+  export CI_FIXER_ENABLED CI_FIXER_MAX_PER_SHA CI_FIXER_MAX_PER_PR CI_FIXER_BACKOFF_BASE_MINS CI_FIXER_AUTHORS
+
+  # [merge] — bot-side automerge lane (F). DEFAULT OFF (automerge_enabled=false => 0). Rendered
+  # as "0"/"1" and defaulted knobs (never empty) so subst's empty-var guard never trips.
+  AUTOMERGE_ENABLED=0; [ "$(cfg '.merge.automerge_enabled')" = "true" ] && AUTOMERGE_ENABLED=1
+  AUTOMERGE_AUTHORS="$(list_or_sentinel "$(jq -r '(.merge.automerge_authors // ["renovate[bot]","dependabot[bot]"]) | join(" ")' <<<"$CFG_JSON")")"
+  AUTOMERGE_METHOD="$(cfg '.merge.automerge_method')"; AUTOMERGE_METHOD="${AUTOMERGE_METHOD:-squash}"
+  AUTOMERGE_MIN_HEAD_AGE_MINS="$(cfg '.merge.automerge_min_head_age_mins')"; AUTOMERGE_MIN_HEAD_AGE_MINS="${AUTOMERGE_MIN_HEAD_AGE_MINS:-10}"
+  AUTOMERGE_REVIEW_WAIT_MINS="$(cfg '.merge.automerge_review_wait_mins')"; AUTOMERGE_REVIEW_WAIT_MINS="${AUTOMERGE_REVIEW_WAIT_MINS:-30}"
+  AUTOMERGE_MAX_ATTEMPTS="$(cfg '.merge.automerge_max_attempts')"; AUTOMERGE_MAX_ATTEMPTS="${AUTOMERGE_MAX_ATTEMPTS:-3}"
+  AUTOMERGE_MAX_PER_POLL="$(cfg '.merge.automerge_max_per_poll')"; AUTOMERGE_MAX_PER_POLL="${AUTOMERGE_MAX_PER_POLL:-1}"
+  export AUTOMERGE_ENABLED AUTOMERGE_AUTHORS AUTOMERGE_METHOD AUTOMERGE_MIN_HEAD_AGE_MINS AUTOMERGE_REVIEW_WAIT_MINS AUTOMERGE_MAX_ATTEMPTS AUTOMERGE_MAX_PER_POLL
+  # review.backlog liveness signal (K7) — oldest-unhandled-PR-age alert threshold (minutes).
+  REVIEW_BACKLOG_ALERT_MINS="$(cfg '.review.policy.backlog_alert_mins')"; REVIEW_BACKLOG_ALERT_MINS="${REVIEW_BACKLOG_ALERT_MINS:-120}"
+  export REVIEW_BACKLOG_ALERT_MINS
+
+  # [janitor] — coordinator tmux reaper (I). DEFAULT OFF; grace rendered in SECONDS (mins*60).
+  JANITOR_TMUX_REAP_ENABLED=0; [ "$(cfg '.janitor.tmux_reap_enabled')" = "true" ] && JANITOR_TMUX_REAP_ENABLED=1
+  local _jgm; _jgm="$(cfg '.janitor.tmux_grace_mins')"; _jgm="${_jgm:-30}"
+  JANITOR_TMUX_GRACE_SECONDS=$(( _jgm * 60 ))
+  export JANITOR_TMUX_REAP_ENABLED JANITOR_TMUX_GRACE_SECONDS
+
+  # [updates] — nightly fleet tool-update lane (G). DEFAULT OFF.
+  TOOL_UPDATE_ENABLED=0; [ "$(cfg '.updates.tool_update_enabled')" = "true" ] && TOOL_UPDATE_ENABLED=1
+  QUIESCE_TIMEOUT_MINS="$(cfg '.updates.quiesce_timeout_mins')"; QUIESCE_TIMEOUT_MINS="${QUIESCE_TIMEOUT_MINS:-45}"
+  export TOOL_UPDATE_ENABLED QUIESCE_TIMEOUT_MINS
   CH_DEFAULT="$(ch default)"; export CH_DEFAULT
   CH_GJC_APPROVALS="$(ch gjc-approvals)"; export CH_GJC_APPROVALS
   CH_GJC_LAB="$(ch gjc-lab)"; export CH_GJC_LAB
@@ -168,7 +196,9 @@ unit_live_path() {
 # map to its CI_FIXER_ENABLED-style gate: AUTOMERGE_ENABLED, etc.).
 lane_gate_var() {
   case "$1" in
-    ci-fixer.service|ci-fixer.timer) printf '%s' "CI_FIXER_ENABLED" ;;
+    ci-fixer.service|ci-fixer.timer)          printf '%s' "CI_FIXER_ENABLED" ;;
+    automerge.service|automerge.timer)        printf '%s' "AUTOMERGE_ENABLED" ;;
+    fleet-update.service|fleet-update.timer)  printf '%s' "TOOL_UPDATE_ENABLED" ;;
     *) printf '%s' "" ;;
   esac
 }

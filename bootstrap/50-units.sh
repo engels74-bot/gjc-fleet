@@ -109,6 +109,28 @@ for t in issue-spool-adapter.timer review-detector.timer merge-gate.timer gjc-wo
 done
 enable_start issue-spool-adapter.path || exit 1
 
+# automerge lane (Workstream F) — default OFF, gated by AUTOMERGE_ENABLED via render's
+# lane_gate_var. render.sh only INSTALLS the unit when the lane is enabled, so gate the enable
+# on the installed unit file: on a default-off host it is simply absent and we skip cleanly.
+if [ "$CHECK" -eq 1 ]; then
+  echo "would run (iff automerge lane enabled): userctl enable --now automerge.timer"
+elif [ -f "$HOME/.config/systemd/user/automerge.timer" ]; then
+  enable_start automerge.timer || exit 1
+else
+  echo "note: automerge lane disabled (automerge.timer not installed) — skipping enable"
+fi
+
+# fleet-update lane (Workstream G) — default OFF, gated by TOOL_UPDATE_ENABLED via render's
+# lane_gate_var; render.sh only INSTALLS the unit when the lane is enabled, so gate the enable
+# on the installed unit file (absent on a default-off host => skip cleanly).
+if [ "$CHECK" -eq 1 ]; then
+  echo "would run (iff updates lane enabled): userctl enable --now fleet-update.timer"
+elif [ -f "$HOME/.config/systemd/user/fleet-update.timer" ]; then
+  enable_start fleet-update.timer || exit 1
+else
+  echo "note: fleet-update lane disabled (fleet-update.timer not installed) — skipping enable"
+fi
+
 # --- 5. hermes gateway install ---------------------------------------------------------
 HERMES_VENV_PY="$HOME/.hermes/hermes-agent/venv/bin/python"
 if [ ! -x "$HERMES_VENV_PY" ]; then
